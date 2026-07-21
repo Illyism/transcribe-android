@@ -17,7 +17,7 @@ Kotlin + Jetpack Compose app for on-device transcription. Companion to `@illyism
 | Background work | WorkManager + foreground service (`dataSync`) |
 | FFmpeg | `dev.ffmpegkit-maintained:ffmpeg-kit-audio` |
 | Whisper | OkHttp multipart → OpenAI `/v1/audio/transcriptions` |
-| Skills (chat) | OkHttp JSON → OpenAI `/v1/chat/completions` (`response_format: json_object`) |
+| Skills | OkHttp SSE → OpenAI `/v1/responses` (Structured Outputs + streamed reasoning summary) |
 | Package / app id | `com.illyism.transcribe` |
 | Min / target SDK | 26 / 35, JDK 17 |
 
@@ -35,7 +35,7 @@ app/src/main/java/com/illyism/transcribe/
   domain/
     FfmpegProcessor.kt         # extract / optimize / chunk
     WhisperClient.kt           # parallel-safe HTTP client
-    ChatClient.kt              # chat/completions for Skills
+    ResponsesClient.kt         # /v1/responses for Skills (json_schema + reasoning)
     TranscribePipeline.kt      # end-to-end job
     UriMediaAccess.kt          # meta + fd path (no full copy)
     SrtBuilder.kt / Models.kt
@@ -43,7 +43,7 @@ app/src/main/java/com/illyism/transcribe/
       Skill.kt                 # Skill model, inputs/outputs/exports, icon map
       BuiltInSkills.kt         # Repurpose, Study Guide, Find Highlights, Ask AI
       SkillJson.kt             # Skill ↔ JSON
-      SkillRunner.kt           # Build messages + parse JSON results
+      SkillRunner.kt           # instructions/input + schema + parse results
   work/TranscribeWorker.kt     # WorkManager entry
   ui/
     TranscribeViewModel.kt     # Pipeline + nav + history
@@ -70,7 +70,9 @@ Progress stages: `EXTRACTING` → `OPTIMIZING` → `CHUNKING` → `TRANSCRIBING`
 
 ## Skills system
 
-Declarative skills transform a finished transcript via one chat/completions call. Skills are **not** a workflow builder — name, prompt, inputs, outputs, exports, icon/color.
+Declarative skills transform a finished transcript via one Responses API call (`POST /v1/responses`). Skills are **not** a workflow builder — name, prompt, inputs, outputs, exports, icon/color, optional `defaultTier`.
+
+Request shape: `stream: true` + `instructions` (skill prompt + output contract) + `input` (metadata/transcript) + `reasoning: { effort, summary: "auto" }` + `text.format` json_schema (strict, one string property per selected output). No `max_output_tokens` (unlimited output). Do **not** put `reasoning.summary_text` in `include` (API 400). While running, SkillRunScreen shows a live Reasoning panel from `response.reasoning_summary_text.delta` when present; on `response.completed`, parse final JSON into result cards. Reasoning is best-effort — never fail a run if the summary is absent. Cancel aborts the OkHttp call.
 
 ### Declarative skill format
 
@@ -89,26 +91,30 @@ Declarative skills transform a finished transcript via one chat/completions call
   "exports": ["COPY", "SHARE", "MARKDOWN"],
   "category": "CUSTOM",
   "builtIn": false,
-  "estimatedRuntime": "~30s"
+  "estimatedRuntime": "~30s",
+  "defaultTier": "TERRA_LIGHT"
 }
 ```
 
-- Built-ins: Repurpose, Study Guide, Find Highlights, Ask AI (`domain/skills/BuiltInSkills.kt`).
+- Built-ins: Repurpose (`TERRA_LIGHT`), Find Highlights (`SOL_LIGHT`), Study Guide (`SOL_MEDIUM`), Ask AI (`null` → last-used). See `domain/skills/BuiltInSkills.kt`.
 - Custom skills persist under `filesDir/skills.json`; import/export a single skill as `.json` via SAF.
-- Run flow: Done → **Create something** → pick skill → select outputs (or Ask AI prompt) → Generate → result cards (Copy / Share / Export all).
-- Runs in `viewModelScope` (not WorkManager) for v1; results cached per `(transcriptId, skillId)`.
+- Run flow: Done → **Create something** → pick skill → select outputs (or Ask AI prompt) → Generate → result cards (Copy / Share / Export all); collapsible **Reasoning** card when a summary is present.
+- Runs in `viewModelScope` (not WorkManager) for v1; results (including reasoning) cached per `(transcriptId, skillId)`.
+- Skill run uses `SkillsViewModel.activeTier` (from `Skill.defaultTier` or last-used); changing the picker persists as the global last-used default. Settings still edits that global default.
 
-### Skills model tiers (Sol / Terra / Luna)
+### Skills model picker
 
-GPT-5.6 family ([OpenAI models](https://developers.openai.com/api/docs/models)). Picker in Settings + skill run (slider + pill). Centralized in `SkillModelTier`:
+GPT-5.6 family ([OpenAI models](https://developers.openai.com/api/docs/models)) plus reasoning effort ([reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)). Picker in Settings + skill run: pill opens a popup slider (Fastest → Smartest) with relative **cost** (`$`…`$$$$$`). Centralized in `SkillModelTier`:
 
-| Tier | Model id | Role |
-|------|----------|------|
-| Luna | [`gpt-5.6-luna`](https://developers.openai.com/api/docs/models/gpt-5.6-luna) | Cost-sensitive, high-volume |
-| Terra | [`gpt-5.6-terra`](https://developers.openai.com/api/docs/models/gpt-5.6-terra) | Default — balanced intelligence & cost |
-| Sol | [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol) | Frontier — complex professional work (`gpt-5.6` alias) |
+| Stop | Model id | `reasoning.effort` | Cost | Label | Role |
+|------|----------|--------------------|------|-------|------|
+| 5.6 Terra Light | [`gpt-5.6-terra`](https://developers.openai.com/api/docs/models/gpt-5.6-terra) | `low` | 1 | Fastest | Everyday transcript skills |
+| 5.6 Sol Light | [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol) | `low` | 2 | Fast | Frontier, lower latency |
+| 5.6 Sol Medium | [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol) | `medium` | 3 | Balanced | High-quality work |
+| 5.6 Sol High | [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol) | `high` | 4 | Smart | Deeper transformations |
+| 5.6 Sol Extra High | [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol) | `xhigh` | 5 | Smartest | Complex professional work |
 
-Transcription stays `whisper-1` (separate from skills chat).
+Transcription stays `whisper-1` (separate from Skills).
 
 ## UI / design
 

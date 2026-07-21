@@ -43,6 +43,7 @@ import com.illyism.transcribe.ui.screens.HomeScreen
 import com.illyism.transcribe.ui.screens.ProcessingScreen
 import com.illyism.transcribe.ui.screens.SelectedScreen
 import com.illyism.transcribe.ui.screens.SettingsScreen
+import com.illyism.transcribe.domain.skills.SkillRunResult
 import com.illyism.transcribe.ui.skills.SkillEditorScreen
 import com.illyism.transcribe.ui.skills.SkillPickerScreen
 import com.illyism.transcribe.ui.skills.SkillResultsScreen
@@ -117,6 +118,9 @@ class MainActivity : ComponentActivity() {
 
                 // System / gesture back pops our explicit stack (docs: custom back via BackHandler).
                 BackHandler(enabled = state.canNavigateUp) {
+                    if (state.route == AppRoute.SkillResults && skillsState.running) {
+                        skillsViewModel.cancelRun()
+                    }
                     viewModel.navigateUp()
                 }
 
@@ -326,10 +330,13 @@ class MainActivity : ComponentActivity() {
                                         transcriptName = File(state.srtPath!!).name,
                                         selectedOutputIds = skillsState.selectedOutputIds,
                                         customPrompt = skillsState.customPrompt,
-                                        running = skillsState.running,
                                         error = skillsState.error,
-                                        skillModelTier = state.skillModelTier,
-                                        onSkillModelTier = viewModel::setSkillModelTier,
+                                        skillModelTier = skillsState.activeTier,
+                                        onSkillModelTier = { tier ->
+                                            skillsViewModel.setRunTier(tier)
+                                            // Keep Settings / global UiState in sync with last-used.
+                                            viewModel.setSkillModelTier(tier)
+                                        },
                                         onToggleOutput = skillsViewModel::toggleOutput,
                                         onCustomPrompt = skillsViewModel::setCustomPrompt,
                                         onGenerate = {
@@ -340,8 +347,9 @@ class MainActivity : ComponentActivity() {
                                                 language = state.language.orEmpty(),
                                                 durationSeconds = state.durationSeconds,
                                                 apiKey = state.apiKey,
-                                                modelId = viewModel.skillModelId(),
-                                                onSuccess = viewModel::openSkillResults
+                                                // Land on the results screen immediately and
+                                                // stream reasoning + output cards in there.
+                                                onStarted = viewModel::openSkillResults
                                             )
                                         },
                                         onBack = viewModel::navigateUp
@@ -350,12 +358,25 @@ class MainActivity : ComponentActivity() {
                             }
 
                             AppRoute.SkillResults -> {
-                                val result = skillsState.result
-                                if (result == null) {
+                                val activeSkill = skillsState.activeSkill
+                                // Use the final result once available; otherwise render the
+                                // in-flight stream (partial output cards + live reasoning).
+                                val displayResult = skillsState.result ?: activeSkill?.let { skill ->
+                                    SkillRunResult(
+                                        skillId = skill.id,
+                                        skillName = skill.name,
+                                        outputs = skillsState.streamingOutputs,
+                                        reasoning = skillsState.streamingReasoning
+                                            .takeIf { it.isNotBlank() }
+                                    )
+                                }
+                                if (displayResult == null) {
                                     LaunchedEffect(Unit) { viewModel.navigateUp() }
                                 } else {
                                     SkillResultsScreen(
-                                        result = result,
+                                        result = displayResult,
+                                        running = skillsState.running,
+                                        error = skillsState.error,
                                         onCopy = skillsViewModel::copyOutput,
                                         onShare = { text, title ->
                                             skillsViewModel.shareText(text, title)?.let {
@@ -372,7 +393,14 @@ class MainActivity : ComponentActivity() {
                                                 startActivity(Intent.createChooser(it, "Share all"))
                                             }
                                         },
-                                        onBack = viewModel::navigateUp,
+                                        onCancel = {
+                                            skillsViewModel.cancelRun()
+                                            viewModel.navigateUp()
+                                        },
+                                        onBack = {
+                                            if (skillsState.running) skillsViewModel.cancelRun()
+                                            viewModel.navigateUp()
+                                        },
                                         onDone = viewModel::finishSkillResults
                                     )
                                 }

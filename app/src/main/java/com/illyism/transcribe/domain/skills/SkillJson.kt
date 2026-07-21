@@ -27,6 +27,7 @@ object SkillJson {
         put("category", skill.category.name)
         put("builtIn", skill.builtIn)
         put("estimatedRuntime", skill.estimatedRuntime)
+        if (skill.defaultTier != null) put("defaultTier", skill.defaultTier)
     }
 
     fun fromJson(json: JSONObject): Skill {
@@ -92,7 +93,8 @@ object SkillJson {
             exports = exports,
             category = category,
             builtIn = json.optBoolean("builtIn", false),
-            estimatedRuntime = json.optString("estimatedRuntime", "~30s")
+            estimatedRuntime = json.optString("estimatedRuntime", "~30s"),
+            defaultTier = json.optString("defaultTier").takeIf { it.isNotBlank() }
         )
     }
 

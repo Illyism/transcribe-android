@@ -148,6 +148,7 @@ class HistoryStore(context: Context) {
     private fun resultToJson(result: SkillRunResult): JSONObject = JSONObject().apply {
         put("skillId", result.skillId)
         put("skillName", result.skillName)
+        if (!result.reasoning.isNullOrBlank()) put("reasoning", result.reasoning)
         put("outputs", JSONArray().apply {
             result.outputs.forEach { out ->
                 put(
@@ -182,7 +183,8 @@ class HistoryStore(context: Context) {
         return SkillRunResult(
             skillId = json.optString("skillId"),
             skillName = json.optString("skillName"),
-            outputs = outputs
+            outputs = outputs,
+            reasoning = json.optString("reasoning").takeIf { it.isNotBlank() }
         )
     }
 }

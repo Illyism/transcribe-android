@@ -47,7 +47,7 @@ data class UiState(
     val maxParallel: Int = 4,
     val model: String = "whisper-1",
     val rawMode: Boolean = false,
-    val skillModelTier: SkillModelTier = SkillModelTier.TERRA,
+    val skillModelTier: SkillModelTier = SkillModelTier.TERRA_LIGHT,
     val stage: PipelineStage = PipelineStage.IDLE,
     val percent: Int = 0,
     val chunksDone: Int = 0,
@@ -614,6 +614,8 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun skillModelId(): String = app.settings.skillModelId()
+
+    fun skillReasoningEffort(): String = app.settings.skillModelTier.reasoningEffort
 
     fun copyText(text: String) {
         if (text.isBlank()) return

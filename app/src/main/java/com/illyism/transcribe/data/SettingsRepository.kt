@@ -40,10 +40,11 @@ class SettingsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_RAW, false)
         set(value) = prefs.edit().putBoolean(KEY_RAW, value).apply()
 
-    /** Skills chat model tier: Luna / Terra / Sol. */
+    /** Skills chat model + reasoning preset. */
     var skillModelTier: SkillModelTier
         get() = SkillModelTier.fromStorage(
-            prefs.getString(KEY_SKILL_MODEL, SkillModelTier.TERRA.name) ?: SkillModelTier.TERRA.name
+            prefs.getString(KEY_SKILL_MODEL, SkillModelTier.TERRA_LIGHT.name)
+                ?: SkillModelTier.TERRA_LIGHT.name
         )
         set(value) = prefs.edit().putString(KEY_SKILL_MODEL, value.name).apply()
 
@@ -70,8 +71,10 @@ class SettingsRepository(context: Context) {
 }
 
 /**
- * Friendly GPT-5.6 tiers for skills chat completions.
- * See https://developers.openai.com/api/docs/models
+ * Friendly GPT-5.6 model + reasoning presets for Skills (Responses API).
+ * See https://developers.openai.com/api/docs/models,
+ * https://developers.openai.com/api/docs/guides/reasoning, and
+ * https://developers.openai.com/api/docs/pricing.
  * Transcription stays whisper-1.
  */
 enum class SkillModelTier(
@@ -79,30 +82,70 @@ enum class SkillModelTier(
     val modelId: String,
     val subtitle: String,
     /** Short quality chip shown in the model picker pill (e.g. Extra High). */
-    val qualityLabel: String
+    val qualityLabel: String,
+    val reasoningEffort: String,
+    /** Relative cost meter 1–5 (higher = more expensive). */
+    val relativeCost: Int,
+    val speed: String
 ) {
-    LUNA(
-        label = "5.6 Luna",
-        modelId = "gpt-5.6-luna",
-        subtitle = "Cost-sensitive, high-volume",
-        qualityLabel = "Fast"
-    ),
-    TERRA(
+    TERRA_LIGHT(
         label = "5.6 Terra",
         modelId = "gpt-5.6-terra",
-        subtitle = "Balanced intelligence & cost",
-        qualityLabel = "High"
+        subtitle = "Balanced model, light reasoning",
+        qualityLabel = "Light",
+        reasoningEffort = "low",
+        relativeCost = 1,
+        speed = "Fastest"
     ),
-    SOL(
+    SOL_LIGHT(
         label = "5.6 Sol",
         modelId = "gpt-5.6-sol",
-        subtitle = "Frontier — complex work",
-        qualityLabel = "Extra High"
+        subtitle = "Frontier model, light reasoning",
+        qualityLabel = "Light",
+        reasoningEffort = "low",
+        relativeCost = 2,
+        speed = "Fast"
+    ),
+    SOL_MEDIUM(
+        label = "5.6 Sol",
+        modelId = "gpt-5.6-sol",
+        subtitle = "Frontier model, balanced reasoning",
+        qualityLabel = "Medium",
+        reasoningEffort = "medium",
+        relativeCost = 3,
+        speed = "Balanced"
+    ),
+    SOL_HIGH(
+        label = "5.6 Sol",
+        modelId = "gpt-5.6-sol",
+        subtitle = "Frontier model, deep reasoning",
+        qualityLabel = "High",
+        reasoningEffort = "high",
+        relativeCost = 4,
+        speed = "Smart"
+    ),
+    SOL_EXTRA_HIGH(
+        label = "5.6 Sol",
+        modelId = "gpt-5.6-sol",
+        subtitle = "Frontier model, extra deep reasoning",
+        qualityLabel = "Extra High",
+        reasoningEffort = "xhigh",
+        relativeCost = 5,
+        speed = "Smartest"
     );
 
+    /** e.g. `$`, `$$`, … for UI meters. */
+    val costMeter: String get() = "$".repeat(relativeCost.coerceIn(1, 5))
+
     companion object {
-        fun fromStorage(value: String): SkillModelTier =
-            entries.find { it.name.equals(value, ignoreCase = true) } ?: TERRA
+        fun fromStorage(value: String): SkillModelTier {
+            entries.find { it.name.equals(value, ignoreCase = true) }?.let { return it }
+            return when (value.uppercase()) {
+                "LUNA", "TERRA" -> TERRA_LIGHT
+                "SOL" -> SOL_EXTRA_HIGH
+                else -> TERRA_LIGHT
+            }
+        }
 
         fun fromSlider(value: Float): SkillModelTier {
             val idx = kotlin.math.round(value).toInt().coerceIn(0, entries.lastIndex)

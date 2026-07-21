@@ -21,12 +21,9 @@ enum class SkillInput {
 }
 
 enum class SkillOutputType {
-    TEXT,
     MARKDOWN,
-    JSON,
     ACTION_ITEMS,
     CHAPTERS,
-    FLASHCARDS,
     QUIZ,
     TIMESTAMP_LIST,
     X_THREAD,
@@ -45,8 +42,7 @@ data class SkillOutput(
 enum class ExportTarget {
     COPY,
     SHARE,
-    MARKDOWN,
-    PDF
+    MARKDOWN
 }
 
 enum class SkillCategory {
@@ -69,7 +65,9 @@ data class Skill(
     val exports: List<ExportTarget> = listOf(ExportTarget.COPY, ExportTarget.SHARE),
     val category: SkillCategory = SkillCategory.CUSTOM,
     val builtIn: Boolean = false,
-    val estimatedRuntime: String = "~30s"
+    val estimatedRuntime: String = "~30s",
+    /** `SkillModelTier.name`, or null to use the user's last-used global default. */
+    val defaultTier: String? = null
 )
 
 data class SkillOutputResult(
@@ -82,7 +80,9 @@ data class SkillOutputResult(
 data class SkillRunResult(
     val skillId: String,
     val skillName: String,
-    val outputs: List<SkillOutputResult>
+    val outputs: List<SkillOutputResult>,
+    /** Best-effort Responses API reasoning summary; null when unavailable. */
+    val reasoning: String? = null
 )
 
 object SkillIcons {

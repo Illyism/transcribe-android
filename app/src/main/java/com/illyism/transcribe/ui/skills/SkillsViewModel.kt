@@ -10,15 +10,17 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.illyism.transcribe.TranscribeApp
+import com.illyism.transcribe.data.SkillModelTier
+import com.illyism.transcribe.domain.ResponsesClient
 import com.illyism.transcribe.domain.skills.BuiltInSkills
-import com.illyism.transcribe.domain.skills.ExportTarget
 import com.illyism.transcribe.domain.skills.Skill
-import com.illyism.transcribe.domain.skills.SkillOutput
-import com.illyism.transcribe.domain.skills.SkillOutputType
+import com.illyism.transcribe.domain.skills.SkillOutputResult
 import com.illyism.transcribe.domain.skills.SkillRunContext
 import com.illyism.transcribe.domain.skills.SkillRunResult
 import com.illyism.transcribe.domain.skills.SkillRunner
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -32,9 +34,14 @@ data class SkillsUiState(
     val builtIns: List<Skill> = BuiltInSkills.all,
     val editing: Skill? = null,
     val activeSkill: Skill? = null,
+    val activeTier: SkillModelTier = SkillModelTier.TERRA_LIGHT,
     val selectedOutputIds: Set<String> = emptySet(),
     val customPrompt: String = "",
     val running: Boolean = false,
+    /** Live reasoning summary while a skill is streaming. */
+    val streamingReasoning: String = "",
+    /** Partial output cards parsed from the in-flight JSON while streaming. */
+    val streamingOutputs: List<SkillOutputResult> = emptyList(),
     val result: SkillRunResult? = null,
     val error: String? = null,
     val snackbar: String? = null
@@ -43,6 +50,7 @@ data class SkillsUiState(
 class SkillsViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as TranscribeApp
     private val runner = SkillRunner()
+    private var runJob: Job? = null
 
     private val _state = MutableStateFlow(SkillsUiState())
     val state: StateFlow<SkillsUiState> = _state.asStateFlow()
@@ -143,16 +151,26 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
 
     fun prepareRun(skillId: String) {
         val skill = app.skillRepository.get(skillId) ?: return
+        val tier = skill.defaultTier?.let(SkillModelTier::fromStorage)
+            ?: app.settings.skillModelTier
         _state.update {
             it.copy(
                 activeSkill = skill,
+                activeTier = tier,
                 selectedOutputIds = skill.outputs.map { o -> o.id }.toSet(),
                 customPrompt = "",
                 result = null,
                 error = null,
-                running = false
+                running = false,
+                streamingReasoning = "",
+                streamingOutputs = emptyList()
             )
         }
+    }
+
+    fun setRunTier(tier: SkillModelTier) {
+        app.settings.skillModelTier = tier
+        _state.update { it.copy(activeTier = tier) }
     }
 
     fun toggleOutput(id: String) {
@@ -167,6 +185,11 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(customPrompt = value) }
     }
 
+    /**
+     * Kicks off a streaming skill run. [onStarted] fires immediately (before any
+     * network work) so the UI can navigate to the results screen and watch the
+     * reasoning + output cards stream in progressively.
+     */
     fun runSkill(
         transcriptId: String,
         filename: String,
@@ -174,8 +197,7 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
         language: String,
         durationSeconds: Double,
         apiKey: String,
-        modelId: String,
-        onSuccess: () -> Unit
+        onStarted: () -> Unit
     ) {
         val skill = _state.value.activeSkill ?: return
         if (apiKey.isBlank()) {
@@ -196,8 +218,20 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
             return
         }
 
-        _state.update { it.copy(running = true, error = null) }
-        viewModelScope.launch {
+        val tier = _state.value.activeTier
+        runJob?.cancel()
+        runner.cancel()
+        _state.update {
+            it.copy(
+                running = true,
+                error = null,
+                streamingReasoning = "",
+                streamingOutputs = emptyList(),
+                result = null
+            )
+        }
+        onStarted()
+        runJob = viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     runner.run(
@@ -211,8 +245,19 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
                             customPrompt = _state.value.customPrompt
                         ),
                         apiKey = apiKey,
-                        model = modelId,
-                        selectedOutputIds = selected.toList()
+                        model = tier.modelId,
+                        reasoningEffort = tier.reasoningEffort,
+                        selectedOutputIds = selected.toList(),
+                        onReasoningDelta = { delta ->
+                            _state.update { state ->
+                                state.copy(streamingReasoning = state.streamingReasoning + delta)
+                            }
+                        },
+                        onPartial = { partial ->
+                            _state.update { state ->
+                                state.copy(streamingOutputs = partial)
+                            }
+                        }
                     )
                 }
             }
@@ -222,18 +267,44 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
                         app.historyStore.cacheSkillResult(transcriptId, runResult)
                     }
                     _state.update {
-                        it.copy(running = false, result = runResult, error = null)
+                        it.copy(
+                            running = false,
+                            result = runResult,
+                            error = null,
+                            streamingReasoning = runResult.reasoning.orEmpty(),
+                            streamingOutputs = emptyList()
+                        )
                     }
-                    onSuccess()
                 },
                 onFailure = { e ->
+                    if (e is ResponsesClient.SkillCancelledException || e is CancellationException) {
+                        _state.update {
+                            it.copy(running = false, error = null, streamingOutputs = emptyList())
+                        }
+                        return@fold
+                    }
                     _state.update {
                         it.copy(
                             running = false,
-                            error = e.message ?: "Skill failed"
+                            error = e.message ?: "Skill failed",
+                            streamingOutputs = emptyList()
                         )
                     }
                 }
+            )
+        }
+    }
+
+    fun cancelRun() {
+        runner.cancel()
+        runJob?.cancel()
+        runJob = null
+        _state.update {
+            it.copy(
+                running = false,
+                streamingReasoning = "",
+                streamingOutputs = emptyList(),
+                error = null
             )
         }
     }
@@ -291,13 +362,4 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
     fun clearError() {
         _state.update { it.copy(error = null) }
     }
-
-    fun defaultOutputsForNew(): List<SkillOutput> = listOf(
-        SkillOutput("result", "Result", SkillOutputType.MARKDOWN),
-        SkillOutput("summary", "Summary", SkillOutputType.MARKDOWN),
-        SkillOutput("action_items", "Action items", SkillOutputType.ACTION_ITEMS)
-    )
-
-    fun availableExportTargets(): List<ExportTarget> =
-        listOf(ExportTarget.COPY, ExportTarget.SHARE, ExportTarget.MARKDOWN)
 }

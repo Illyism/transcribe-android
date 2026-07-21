@@ -18,19 +18,20 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -38,13 +39,13 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.ListItem
-import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import com.illyism.transcribe.domain.ExportFormat
 import androidx.compose.runtime.Composable
@@ -66,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import com.illyism.transcribe.domain.SrtBuilder
 import com.illyism.transcribe.ui.components.PrimaryButton
 import com.illyism.transcribe.ui.components.SecondaryButton
+import com.illyism.transcribe.ui.components.StickyBottomBar
 import com.illyism.transcribe.ui.components.formatBytes
 import java.io.File
 import java.util.Locale
@@ -93,16 +95,16 @@ fun DoneScreen(
         runCatching { file.readText() }.getOrDefault(preview)
     }
     val plain = remember(srtBody) { SrtBuilder.plainText(srtBody) }
-    val segments = remember(srtBody) { SrtBuilder.segmentCount(srtBody) }
     val duration = durationSeconds.takeIf { it > 0 } ?: SrtBuilder.durationSeconds(srtBody)
     val langLabel = language
         ?.takeIf { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) }
         ?.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
         ?: "Unknown"
+    val previewText = plain.ifBlank { srtBody.ifBlank { preview.ifBlank { "—" } } }
 
-    var previewMode by remember { mutableStateOf(PreviewMode.Text) }
     var showRename by remember { mutableStateOf(false) }
     var showFull by remember { mutableStateOf(false) }
+    var selectAllOnOpen by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
 
     Column(
@@ -232,21 +234,6 @@ fun DoneScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            PrimaryButton(
-                text = "Export",
-                onClick = { showExport = true },
-                icon = Icons.Outlined.IosShare
-            )
-
-            Spacer(modifier = Modifier.height(10.dp))
-            PrimaryButton(
-                text = "Create something",
-                onClick = onCreateSomething,
-                icon = Icons.Outlined.AutoAwesome
-            )
-
             Spacer(modifier = Modifier.height(20.dp))
 
             Row(
@@ -258,49 +245,61 @@ fun DoneScreen(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.weight(1f)
                 )
-                PreviewToggle(mode = previewMode, onModeChange = { previewMode = it })
+                IconButton(
+                    onClick = { onCopyText(plain.ifBlank { srtBody }) }
+                ) {
+                    Icon(
+                        Icons.Outlined.ContentCopy,
+                        contentDescription = "Copy text",
+                        tint = scheme.primary
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        selectAllOnOpen = true
+                        showFull = true
+                    }
+                ) {
+                    Icon(
+                        Icons.Outlined.SelectAll,
+                        contentDescription = "Select all",
+                        tint = scheme.primary
+                    )
+                }
             }
-            Spacer(modifier = Modifier.height(6.dp))
-            Text(
-                "00:00–${SrtBuilder.formatClock(duration)} · $segments subtitle segments",
-                style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Column(
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(scheme.surfaceVariant)
+                    .clickable {
+                        selectAllOnOpen = false
+                        showFull = true
+                    }
                     .padding(16.dp)
             ) {
                 Text(
-                    text = when (previewMode) {
-                        PreviewMode.Text -> plain.ifBlank { "—" }
-                        PreviewMode.Srt -> srtBody.ifBlank { preview.ifBlank { "—" } }
-                    },
+                    text = previewText,
                     style = MaterialTheme.typography.bodyLarge,
                     color = scheme.onSurface,
-                    maxLines = if (previewMode == PreviewMode.Text) 5 else 8,
+                    maxLines = 8,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    "View full transcript →",
-                    color = scheme.primary,
-                    style = MaterialTheme.typography.labelLarge,
-                    modifier = Modifier.clickable { showFull = true }
-                )
             }
+        }
 
-            Spacer(modifier = Modifier.height(12.dp))
+        StickyBottomBar(showDivider = false) {
             PrimaryButton(
-                text = "Copy text",
-                onClick = { onCopyText(plain.ifBlank { srtBody }) },
-                icon = Icons.Outlined.ContentCopy
+                text = "Create something",
+                onClick = onCreateSomething,
+                icon = Icons.Outlined.AutoAwesome
             )
-
-            Spacer(modifier = Modifier.height(20.dp))
+            SecondaryButton(
+                text = "Export",
+                onClick = { showExport = true },
+                icon = Icons.Outlined.IosShare
+            )
             SecondaryButton(
                 text = "Transcribe another video",
                 onClick = onAnother,
@@ -327,6 +326,10 @@ fun DoneScreen(
                 showExport = false
                 onCopyText(plain.ifBlank { srtBody })
             },
+            onCopySubtitles = {
+                showExport = false
+                onCopyText(srtBody)
+            },
             onSelect = { format ->
                 showExport = false
                 onExport(format)
@@ -338,8 +341,11 @@ fun DoneScreen(
         FullTranscriptSheet(
             srtBody = srtBody,
             plainText = plain,
-            initialMode = previewMode,
-            onDismiss = { showFull = false },
+            selectAllOnOpen = selectAllOnOpen,
+            onDismiss = {
+                showFull = false
+                selectAllOnOpen = false
+            },
             onCopy = onCopyText
         )
     }
@@ -350,6 +356,7 @@ fun DoneScreen(
 private fun ExportFormatSheet(
     onDismiss: () -> Unit,
     onCopyText: () -> Unit,
+    onCopySubtitles: () -> Unit,
     onSelect: (ExportFormat) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -363,32 +370,72 @@ private fun ExportFormatSheet(
             modifier = Modifier
                 .fillMaxWidth()
                 .navigationBarsPadding()
-                .padding(bottom = 24.dp)
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp)
         ) {
             Text(
-                "Export as",
+                "Export",
                 style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+
+            Text(
+                "Copy",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = scheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ExportGridTile(
+                    label = "Text",
+                    icon = Icons.Outlined.ContentCopy,
+                    onClick = onCopyText,
+                    modifier = Modifier.weight(1f)
+                )
+                ExportGridTile(
+                    label = "Subtitles",
+                    icon = Icons.Outlined.Subtitles,
+                    onClick = onCopySubtitles,
+                    modifier = Modifier.weight(1f)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+            Text(
+                "Save & share",
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = scheme.onSurfaceVariant
             )
             Text(
-                "Copy, or save to Downloads/Transcribe and open Share",
-                style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 20.dp)
+                "Downloads/Transcribe, then Share",
+                style = MaterialTheme.typography.bodySmall,
+                color = scheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(8.dp))
-            ExportSheetRow(
-                label = "Copy text",
-                supporting = "Plain transcript to clipboard",
-                icon = Icons.Outlined.ContentCopy,
-                onClick = onCopyText
-            )
-            ExportFormat.entries.forEach { format ->
-                ExportSheetRow(
-                    label = format.label,
-                    supporting = "Save & share",
-                    icon = iconForExportFormat(format),
-                    onClick = { onSelect(format) }
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                ExportGridTile(
+                    label = "TXT",
+                    icon = Icons.Outlined.Description,
+                    onClick = { onSelect(ExportFormat.TXT) },
+                    modifier = Modifier.weight(1f)
+                )
+                ExportGridTile(
+                    label = "MD",
+                    icon = Icons.Outlined.Code,
+                    onClick = { onSelect(ExportFormat.MD) },
+                    modifier = Modifier.weight(1f)
+                )
+                ExportGridTile(
+                    label = "SRT",
+                    icon = Icons.Outlined.ClosedCaption,
+                    onClick = { onSelect(ExportFormat.SRT) },
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -396,32 +443,35 @@ private fun ExportFormatSheet(
 }
 
 @Composable
-private fun ExportSheetRow(
+private fun ExportGridTile(
     label: String,
-    supporting: String,
     icon: ImageVector,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val scheme = MaterialTheme.colorScheme
-    ListItem(
-        headlineContent = { Text(label) },
-        supportingContent = {
-            Text(supporting, color = scheme.onSurfaceVariant)
-        },
-        leadingContent = {
-            Icon(icon, contentDescription = null, tint = scheme.primary)
-        },
-        colors = ListItemDefaults.colors(containerColor = scheme.surface),
-        modifier = Modifier
-            .fillMaxWidth()
+    Column(
+        modifier = modifier
+            .clip(RoundedCornerShape(16.dp))
+            .background(scheme.surfaceVariant)
             .clickable(onClick = onClick)
-    )
-}
-
-private fun iconForExportFormat(format: ExportFormat): ImageVector = when (format) {
-    ExportFormat.TXT -> Icons.Outlined.Description
-    ExportFormat.MD -> Icons.Outlined.Code
-    ExportFormat.SRT -> Icons.Outlined.Subtitles
+            .padding(vertical = 18.dp, horizontal = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            tint = scheme.primary,
+            modifier = Modifier.size(24.dp)
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelLarge,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+    }
 }
 
 @Composable
@@ -501,16 +551,35 @@ private fun RenameDialog(
 private fun FullTranscriptSheet(
     srtBody: String,
     plainText: String,
-    initialMode: PreviewMode,
+    selectAllOnOpen: Boolean,
     onDismiss: () -> Unit,
     onCopy: (String) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var mode by remember(initialMode) { mutableStateOf(initialMode) }
+    var mode by remember { mutableStateOf(PreviewMode.Text) }
     val body = when (mode) {
         PreviewMode.Text -> plainText.ifBlank { srtBody }
         PreviewMode.Srt -> srtBody
+    }
+    val focusRequester = remember { FocusRequester() }
+    var fieldValue by remember(body, selectAllOnOpen) {
+        mutableStateOf(
+            TextFieldValue(
+                text = body,
+                selection = if (selectAllOnOpen && body.isNotEmpty()) {
+                    TextRange(0, body.length)
+                } else {
+                    TextRange.Zero
+                }
+            )
+        )
+    }
+    LaunchedEffect(selectAllOnOpen, body) {
+        if (selectAllOnOpen && body.isNotEmpty()) {
+            fieldValue = TextFieldValue(text = body, selection = TextRange(0, body.length))
+            focusRequester.requestFocus()
+        }
     }
 
     ModalBottomSheet(
@@ -536,7 +605,17 @@ private fun FullTranscriptSheet(
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.weight(1f)
                 )
-                PreviewToggle(mode = mode, onModeChange = { mode = it })
+                PreviewToggle(
+                    mode = mode,
+                    onModeChange = { next ->
+                        mode = next
+                        val nextBody = when (next) {
+                            PreviewMode.Text -> plainText.ifBlank { srtBody }
+                            PreviewMode.Srt -> srtBody
+                        }
+                        fieldValue = TextFieldValue(text = nextBody)
+                    }
+                )
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
@@ -546,23 +625,24 @@ private fun FullTranscriptSheet(
             )
             Spacer(modifier = Modifier.height(12.dp))
 
-            SelectionContainer(
+            TextField(
+                value = fieldValue,
+                onValueChange = { fieldValue = it },
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
-                    .background(scheme.surfaceVariant)
-            ) {
-                Text(
-                    body,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = scheme.onSurface,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(rememberScrollState())
-                        .padding(16.dp)
+                    .focusRequester(focusRequester),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = scheme.surfaceVariant,
+                    unfocusedContainerColor = scheme.surfaceVariant,
+                    disabledContainerColor = scheme.surfaceVariant,
+                    focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
+                    disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
                 )
-            }
+            )
 
             Spacer(modifier = Modifier.height(12.dp))
             Row(

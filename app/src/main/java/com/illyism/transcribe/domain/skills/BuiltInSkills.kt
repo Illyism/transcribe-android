@@ -21,7 +21,8 @@ Keep tone clear and useful. Do not invent facts not present in the transcript.
         ),
         category = SkillCategory.REPURPOSE,
         builtIn = true,
-        estimatedRuntime = "~45s"
+        estimatedRuntime = "~45s",
+        defaultTier = "TERRA_LIGHT"
     )
 
     val studyGuide = Skill(
@@ -41,7 +42,8 @@ Be accurate and concise. Prefer bullet notes over long paragraphs.
         ),
         category = SkillCategory.STUDY,
         builtIn = true,
-        estimatedRuntime = "~40s"
+        estimatedRuntime = "~40s",
+        defaultTier = "SOL_MEDIUM"
     )
 
     val findHighlights = Skill(
@@ -52,15 +54,23 @@ Be accurate and concise. Prefer bullet notes over long paragraphs.
         color = "#42A5F5",
         prompt = """
 Find the most interesting, quotable, or shareable moments in this transcript.
-Include timestamps when available. Suggest short hooks suitable for clips or posts.
+Format each highlight as a markdown bullet:
+- **MM:SS–MM:SS — “quote”** Hook: **short hook**
+Suggest short hooks suitable for clips or posts.
 """.trimIndent(),
         outputs = listOf(
-            SkillOutput("highlights", "Highlights", SkillOutputType.TIMESTAMP_LIST, "Timestamped moments"),
+            SkillOutput(
+                "highlights",
+                "Highlights",
+                SkillOutputType.TIMESTAMP_LIST,
+                "Markdown bullets with timestamps"
+            ),
             SkillOutput("hooks", "Suggested hooks", SkillOutputType.MARKDOWN, "Short clip/post hooks")
         ),
         category = SkillCategory.HIGHLIGHTS,
         builtIn = true,
-        estimatedRuntime = "~30s"
+        estimatedRuntime = "~30s",
+        defaultTier = "SOL_LIGHT"
     )
 
     val askAi = Skill(

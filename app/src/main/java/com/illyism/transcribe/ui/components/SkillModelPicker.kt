@@ -1,14 +1,26 @@
 package com.illyism.transcribe.ui.components
 
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,11 +34,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,6 +44,7 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -43,17 +53,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.illyism.transcribe.data.SkillModelTier
-import kotlin.random.Random
 
 /**
- * Cursor-style skills model picker: Advanced quality slider + pill selector.
- * Tiers: Luna → Terra → Sol.
+ * Model picker: pill shows current tier; tap opens a popup slider (no Advanced header).
+ * Dragging updates the $ cost meter and track color (green → red).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -61,61 +75,43 @@ fun SkillModelPicker(
     selected: SkillModelTier,
     onSelected: (SkillModelTier) -> Unit,
     modifier: Modifier = Modifier,
-    initiallyExpanded: Boolean = true
+    initiallyExpanded: Boolean = false
 ) {
-    var expanded by remember { mutableStateOf(initiallyExpanded) }
-    var menuOpen by remember { mutableStateOf(false) }
-    var sliderValue by remember(selected) { mutableFloatStateOf(selected.sliderValue) }
+    var popupOpen by remember { mutableStateOf(initiallyExpanded) }
+    var sliderValue by remember { mutableFloatStateOf(selected.sliderValue) }
+    val sliderInteractionSource = remember { MutableInteractionSource() }
+    val dragging by sliderInteractionSource.collectIsDraggedAsState()
+    LaunchedEffect(selected) {
+        if (!dragging) sliderValue = selected.sliderValue
+    }
+
+    val previewTier = SkillModelTier.fromSlider(sliderValue)
+    val displayTier = if (popupOpen) previewTier else selected
     val scheme = MaterialTheme.colorScheme
-    val trackColor = scheme.primary
+    val trackColor by animateColorAsState(
+        targetValue = tierColor(sliderValue),
+        animationSpec = tween(280, easing = FastOutSlowInEasing),
+        label = "trackColor"
+    )
 
     Column(modifier = modifier.fillMaxWidth()) {
         AnimatedVisibility(
-            visible = expanded,
-            enter = fadeIn() + expandVertically(),
-            exit = fadeOut() + shrinkVertically()
+            visible = popupOpen,
+            enter = fadeIn(tween(160)) + expandVertically(tween(220)),
+            exit = fadeOut(tween(120)) + shrinkVertically(tween(180))
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(bottom = 10.dp)
+                    .shadow(12.dp, RoundedCornerShape(22.dp), clip = false)
                     .clip(RoundedCornerShape(22.dp))
                     .background(scheme.surfaceVariant)
                     .padding(horizontal = 16.dp, vertical = 14.dp)
             ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = ripple(bounded = true),
-                            onClick = { expanded = false }
-                        ),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        "Advanced",
-                        style = MaterialTheme.typography.titleSmall,
-                        color = scheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Icon(
-                        Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = scheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Icon(
-                        Icons.Filled.Bolt,
-                        contentDescription = null,
-                        tint = trackColor,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                SparkleSlider(
+                CostSpeedHeader(tier = previewTier, accent = trackColor)
+                Spacer(modifier = Modifier.height(12.dp))
+                TierSlider(
                     value = sliderValue,
                     onValueChange = { sliderValue = it },
                     onValueChangeFinished = {
@@ -123,163 +119,125 @@ fun SkillModelPicker(
                         sliderValue = tier.sliderValue
                         onSelected(tier)
                     },
-                    valueRange = 0f..SkillModelTier.entries.lastIndex.toFloat(),
-                    steps = SkillModelTier.entries.size - 2,
-                    trackColor = trackColor
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    listOf("Luna", "Terra", "Sol").forEachIndexed { index, name ->
-                        val tier = SkillModelTier.entries[index]
-                        Text(
-                            name,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = if (tier == selected) trackColor else scheme.onSurfaceVariant,
-                            fontWeight = if (tier == selected) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    }
-                }
-            }
-        }
-
-        if (expanded) {
-            Spacer(modifier = Modifier.height(10.dp))
-        }
-
-        if (!expanded) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 8.dp)
-                    .clickable { expanded = true },
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Advanced",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = scheme.onSurfaceVariant
-                )
-                Icon(
-                    Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = scheme.onSurfaceVariant,
-                    modifier = Modifier.size(18.dp)
+                    trackColor = trackColor,
+                    interactionSource = sliderInteractionSource,
+                    dragging = dragging
                 )
             }
         }
 
-        Box {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(50))
-                    .background(scheme.surfaceVariant)
-                    .clickable { menuOpen = true }
-                    .padding(horizontal = 14.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Filled.Bolt,
-                    contentDescription = null,
-                    tint = scheme.onSurface,
-                    modifier = Modifier.size(18.dp)
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(50))
+                .background(scheme.surfaceVariant)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = ripple(bounded = true),
+                    onClick = { popupOpen = !popupOpen }
                 )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    selected.label,
-                    style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = scheme.onSurface
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    selected.qualityLabel,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f)
-                )
-                Icon(
-                    Icons.Outlined.ExpandMore,
-                    contentDescription = "Choose model",
-                    tint = scheme.onSurfaceVariant
-                )
-            }
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                displayTier.label,
+                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = scheme.onSurface
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                displayTier.qualityLabel,
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                if (popupOpen) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                contentDescription = if (popupOpen) "Hide model slider" else "Choose model",
+                tint = scheme.onSurfaceVariant
+            )
+        }
+    }
+}
 
-            DropdownMenu(
-                expanded = menuOpen,
-                onDismissRequest = { menuOpen = false }
-            ) {
-                SkillModelTier.entries.forEach { tier ->
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(
-                                        Icons.Filled.Bolt,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp),
-                                        tint = if (tier == selected) trackColor else scheme.onSurface
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        tier.label,
-                                        fontWeight = if (tier == selected) FontWeight.SemiBold else FontWeight.Normal
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(
-                                        tier.qualityLabel,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = scheme.onSurfaceVariant
-                                    )
-                                }
-                                Text(
-                                    "${tier.subtitle} · ${tier.modelId}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = scheme.onSurfaceVariant
-                                )
-                            }
-                        },
-                        onClick = {
-                            menuOpen = false
-                            sliderValue = tier.sliderValue
-                            onSelected(tier)
-                        }
-                    )
-                }
+@Composable
+private fun CostSpeedHeader(tier: SkillModelTier, accent: Color) {
+    val scheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            repeat(5) { index ->
+                val active = index < tier.relativeCost
+                val scale by animateFloatAsState(
+                    targetValue = if (active) 1f else 0.85f,
+                    animationSpec = spring(
+                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                        stiffness = Spring.StiffnessMedium
+                    ),
+                    label = "dollarScale$index"
+                )
+                val alpha by animateFloatAsState(
+                    targetValue = if (active) 1f else 0.22f,
+                    animationSpec = tween(180),
+                    label = "dollarAlpha$index"
+                )
+                Text(
+                    text = "$",
+                    color = accent.copy(alpha = alpha),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = (18 * scale).sp,
+                    modifier = Modifier.padding(end = 1.dp)
+                )
             }
+        }
+
+        AnimatedContent(
+            targetState = tier.speed,
+            transitionSpec = {
+                (fadeIn(tween(160)) + scaleIn(initialScale = 0.92f)) togetherWith
+                    (fadeOut(tween(100)) + scaleOut(targetScale = 0.92f))
+            },
+            label = "speedLabel"
+        ) { speed ->
+            Text(
+                speed,
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                color = scheme.onSurfaceVariant
+            )
         }
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SparkleSlider(
+private fun TierSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     onValueChangeFinished: () -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>,
-    steps: Int,
-    trackColor: Color
+    trackColor: Color,
+    interactionSource: MutableInteractionSource,
+    dragging: Boolean
 ) {
     val scheme = MaterialTheme.colorScheme
-    val sparkles = remember {
-        List(18) {
-            Sparkle(
-                x = Random.nextFloat(),
-                y = Random.nextFloat(),
-                radius = 1.2f + Random.nextFloat() * 2.2f,
-                alpha = 0.25f + Random.nextFloat() * 0.55f
-            )
-        }
-    }
+    val thumbSize by animateDpAsState(
+        targetValue = if (dragging) 34.dp else 28.dp,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "thumbSize"
+    )
+    val trackHeight = 28.dp
+    val stopCount = SkillModelTier.entries.lastIndex
+    val valueRange = 0f..SkillModelTier.entries.lastIndex.toFloat()
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(36.dp),
+            .height(44.dp),
         contentAlignment = Alignment.Center
     ) {
         Slider(
@@ -287,7 +245,8 @@ private fun SparkleSlider(
             onValueChange = onValueChange,
             onValueChangeFinished = onValueChangeFinished,
             valueRange = valueRange,
-            steps = steps,
+            steps = SkillModelTier.entries.size - 2,
+            interactionSource = interactionSource,
             modifier = Modifier.fillMaxWidth(),
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
@@ -299,7 +258,8 @@ private fun SparkleSlider(
             thumb = {
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(thumbSize)
+                        .shadow(if (dragging) 8.dp else 3.dp, CircleShape)
                         .clip(CircleShape)
                         .background(Color.White)
                 )
@@ -312,38 +272,63 @@ private fun SparkleSlider(
                 Canvas(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(14.dp)
-                        .clip(RoundedCornerShape(50))
+                        .height(trackHeight)
                 ) {
-                    // Inactive track
+                    val radius = size.height / 2
+                    // Align fill/dots to thumb centers (Material slider inset).
+                    val thumbR = 14.dp.toPx()
+                    val travelStart = thumbR
+                    val travelEnd = size.width - thumbR
+                    val travel = (travelEnd - travelStart).coerceAtLeast(1f)
+                    val thumbX = travelStart + travel * fraction
+
                     drawRoundRect(
-                        color = scheme.outline.copy(alpha = 0.35f),
-                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+                        color = scheme.outline.copy(alpha = 0.28f),
+                        cornerRadius = CornerRadius(radius)
                     )
-                    // Active track with soft gradient
-                    val activeWidth = size.width * fraction
-                    if (activeWidth > 0f) {
+
+                    // Fill through thumb center — no stub capsule at value 0.
+                    val activeWidth = thumbX.coerceIn(0f, size.width)
+                    if (activeWidth > 1f) {
                         drawRoundRect(
                             brush = Brush.horizontalGradient(
                                 colors = listOf(
-                                    trackColor.copy(alpha = 0.85f),
+                                    trackColor.copy(alpha = 0.35f),
+                                    trackColor.copy(alpha = 0.15f)
+                                )
+                            ),
+                            topLeft = Offset(0f, -4f),
+                            size = Size(activeWidth.coerceAtLeast(radius), size.height + 8f),
+                            cornerRadius = CornerRadius(radius + 4f)
+                        )
+                        drawRoundRect(
+                            brush = Brush.horizontalGradient(
+                                colors = listOf(
+                                    trackColor.copy(alpha = 0.9f),
                                     trackColor
                                 )
                             ),
-                            size = androidx.compose.ui.geometry.Size(activeWidth, size.height),
-                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2)
+                            size = Size(activeWidth.coerceAtLeast(radius), size.height),
+                            cornerRadius = CornerRadius(radius)
                         )
-                        // Sparkles inside the filled portion
-                        sparkles.forEach { s ->
-                            val x = s.x * activeWidth
-                            if (x in 0f..activeWidth) {
-                                drawCircle(
-                                    color = Color.White.copy(alpha = s.alpha),
-                                    radius = s.radius,
-                                    center = Offset(x, size.height * s.y)
-                                )
-                            }
-                        }
+                    }
+
+                    // Interior stops at tier centers 1..(last-1). Hide under the thumb,
+                    // and never draw the final interior tick when the thumb is on Extra High
+                    // (that rightmost speck against the white knob looked like a glitch).
+                    val hideR = thumbR * 1.35f
+                    for (i in 1 until stopCount) {
+                        val x = travelStart + travel * (i.toFloat() / stopCount)
+                        if (i == stopCount - 1 && fraction > 0.8f) continue
+                        val dx = if (x >= thumbX) x - thumbX else thumbX - x
+                        if (dx < hideR) continue
+                        drawCircle(
+                            color = Color.White.copy(
+                                alpha = if (x <= thumbX) 0.4f else 0.22f
+                            ),
+                            radius = 3f,
+                            center = Offset(x, size.height / 2)
+                        )
                     }
                 }
             }
@@ -351,9 +336,18 @@ private fun SparkleSlider(
     }
 }
 
-private data class Sparkle(
-    val x: Float,
-    val y: Float,
-    val radius: Float,
-    val alpha: Float
-)
+/** Green (cheap) → amber → orange → red (costly) as the slider moves right. */
+private fun tierColor(sliderValue: Float): Color {
+    val t = (sliderValue / SkillModelTier.entries.lastIndex.toFloat()).coerceIn(0f, 1f)
+    val stops = listOf(
+        Color(0xFF34C759), // green
+        Color(0xFF30B0C7), // teal
+        Color(0xFFE8A838), // amber
+        Color(0xFFFF8A3D), // orange
+        Color(0xFFFF5A5F)  // red
+    )
+    val scaled = t * (stops.lastIndex)
+    val i = scaled.toInt().coerceIn(0, stops.lastIndex - 1)
+    val local = scaled - i
+    return lerp(stops[i], stops[i + 1], local)
+}
