@@ -1,0 +1,26 @@
+# Gradle
+.gradle/
+build/
+**/build/
+.kotlin/
+
+# Local SDK / IDE
+local.properties
+.idea/
+*.iml
+.vscode/
+*.swp
+.DS_Store
+
+# Native / captures
+.cxx/
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+
+# Screenshots / debug dumps (optional local artifacts)
+screenshots/
+android_screenshot_*.png
+*.log
