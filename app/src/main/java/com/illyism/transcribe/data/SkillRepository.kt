@@ -16,6 +16,7 @@ class SkillRepository(context: Context) {
     private val file = File(appContext.filesDir, "skills.json")
     private val lock = Any()
 
+    /** User-visible built-ins (Catalog is system-only). */
     fun builtIns(): List<Skill> = BuiltInSkills.all
 
     fun customSkills(): List<Skill> = synchronized(lock) { loadCustom() }

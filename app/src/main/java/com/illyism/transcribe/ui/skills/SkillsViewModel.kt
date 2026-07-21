@@ -134,6 +134,14 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    fun exportFilename(id: String): String {
+        val name = app.skillRepository.get(id)?.name ?: "skill"
+        return "${sanitizeFilename(name)}.json"
+    }
+
+    fun cachedSkillResult(transcriptId: String, skillId: String): SkillRunResult? =
+        app.historyStore.getCachedSkillResult(transcriptId, skillId)
+
     fun exportSkill(id: String, uri: Uri) {
         val ok = app.skillRepository.exportSkill(id, uri)
         _state.update {
@@ -166,6 +174,24 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
                 streamingOutputs = emptyList()
             )
         }
+    }
+
+    /** Hydrate in-memory result from HistoryStore so reopen supports copy/export. */
+    fun loadCachedResult(transcriptId: String, skillId: String): Boolean {
+        val current = _state.value
+        if (current.running && current.activeSkill?.id == skillId) return true
+        if (current.result?.skillId == skillId) return true
+        val cached = app.historyStore.getCachedSkillResult(transcriptId, skillId) ?: return false
+        _state.update {
+            it.copy(
+                result = cached,
+                running = false,
+                error = null,
+                streamingReasoning = "",
+                streamingOutputs = emptyList()
+            )
+        }
+        return true
     }
 
     fun setRunTier(tier: SkillModelTier) {
@@ -340,7 +366,7 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
             "## ${out.label}\n\n${out.content}"
         }
         val dir = File(getApplication<Application>().cacheDir, "skill_exports").also { it.mkdirs() }
-        val file = File(dir, "${result.skillName.replace(Regex("[^a-zA-Z0-9._-]"), "_")}.md")
+        val file = File(dir, "${sanitizeFilename(result.skillName)}.md")
         file.writeText(body)
         val uri = FileProvider.getUriForFile(
             getApplication(),
@@ -362,4 +388,7 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
     fun clearError() {
         _state.update { it.copy(error = null) }
     }
+
+    private fun sanitizeFilename(name: String): String =
+        name.replace(Regex("[^a-zA-Z0-9._-]"), "_").ifBlank { "skill" }
 }

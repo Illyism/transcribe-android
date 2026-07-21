@@ -2,16 +2,19 @@ package com.illyism.transcribe.ui.nav
 
 import androidx.navigation3.runtime.NavKey
 
-/**
- * Handles navigation events (forward and back) by updating the navigation state.
- */
+/** Updates [NavigationState] for forward/back and tab switches. */
 class Navigator(val state: NavigationState) {
     fun navigate(route: NavKey) {
         if (route in state.backStacks.keys) {
-            // Top-level tab — switch to it (preserving its stack).
             state.topLevelRoute = route
         } else {
             state.backStacks[state.topLevelRoute]?.add(route)
+        }
+    }
+
+    fun ensureTopLevel(route: NavKey) {
+        if (route in state.backStacks.keys) {
+            state.topLevelRoute = route
         }
     }
 
@@ -20,7 +23,7 @@ class Navigator(val state: NavigationState) {
             ?: error("Stack for ${state.topLevelRoute} not found")
         val currentRoute = currentStack.last()
 
-        // If we're at the base of the current tab, go back to the start (Home) stack.
+        // At tab root → exit through the start (Home) stack.
         if (currentRoute == state.topLevelRoute) {
             state.topLevelRoute = state.startRoute
         } else {
@@ -28,7 +31,6 @@ class Navigator(val state: NavigationState) {
         }
     }
 
-    /** Clear the current tab stack down to its root key. */
     fun clearToRoot() {
         val stack = state.backStacks[state.topLevelRoute] ?: return
         val root = state.topLevelRoute
@@ -36,7 +38,6 @@ class Navigator(val state: NavigationState) {
         stack.add(root)
     }
 
-    /** Replace the top of the current stack, or push if only the root is present. */
     fun replaceTop(route: NavKey) {
         val stack = state.backStacks[state.topLevelRoute] ?: return
         if (stack.size <= 1) {
@@ -59,4 +60,70 @@ class Navigator(val state: NavigationState) {
 
     fun currentKey(): NavKey? =
         state.backStacks[state.topLevelRoute]?.lastOrNull()
+
+    /** Home-tab flow: Selected (skip if already mid-job / on a transcript). */
+    fun openSelected() {
+        ensureTopLevel(AppKey.Home)
+        val top = currentKey()
+        if (top !is AppKey.Selected &&
+            top !is AppKey.Processing &&
+            top !is AppKey.TranscriptDetail
+        ) {
+            navigate(AppKey.Selected)
+        }
+    }
+
+    /** Home-tab flow: Processing (replace Selected when present). */
+    fun openProcessing() {
+        ensureTopLevel(AppKey.Home)
+        when (currentKey()) {
+            is AppKey.Processing -> Unit
+            is AppKey.Selected -> replaceTop(AppKey.Processing)
+            else -> navigate(AppKey.Processing)
+        }
+    }
+
+    /** Home-tab flow: finished transcript detail (replace job screens). */
+    fun openFinishedTranscript(id: String) {
+        ensureTopLevel(AppKey.Home)
+        when (currentKey()) {
+            is AppKey.Processing,
+            is AppKey.Selected,
+            is AppKey.TranscriptDetail ->
+                replaceTop(AppKey.TranscriptDetail(id))
+            else -> navigate(AppKey.TranscriptDetail(id))
+        }
+    }
+
+    /**
+     * Open a transcript from the History list.
+     * On wide list-detail layouts, replaces an existing detail instead of stacking.
+     */
+    fun openHistoryDetail(transcriptId: String) {
+        ensureTopLevel(AppKey.History)
+        val stack = state.backStacks[AppKey.History] ?: return
+        val detail = AppKey.TranscriptDetail(transcriptId)
+        // Drop skill/settings overlays until History or an existing detail is on top.
+        while (stack.size > 1 &&
+            stack.last() !is AppKey.History &&
+            stack.last() !is AppKey.TranscriptDetail
+        ) {
+            stack.removeLastOrNull()
+        }
+        when (stack.lastOrNull()) {
+            is AppKey.TranscriptDetail -> stack[stack.lastIndex] = detail
+            else -> stack.add(detail)
+        }
+    }
+
+    /**
+     * Deep link: History → TranscriptDetail, optionally → SkillResults.
+     * Back returns through a sensible stack (results → detail → History).
+     */
+    fun openFromDeepLink(transcriptId: String, skillId: String? = null) {
+        openHistoryDetail(transcriptId)
+        if (skillId != null) {
+            navigate(AppKey.SkillResults(transcriptId, skillId))
+        }
+    }
 }

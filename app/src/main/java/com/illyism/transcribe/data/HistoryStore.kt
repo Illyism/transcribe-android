@@ -16,14 +16,32 @@ data class HistoryEntry(
     val preview: String,
     val language: String = "",
     val durationSeconds: Double = 0.0,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    /** Human title from Catalog enrich (≤60 chars). */
+    val title: String = "",
+    /** Two-line summary from Catalog enrich. */
+    val summary: String = "",
+    /** Absolute path to a local JPEG under filesDir/thumbnails/. */
+    val thumbnailPath: String = ""
+)
+
+/** Lightweight index row for a cached skill run on a transcript. */
+data class CachedSkillRun(
+    val skillId: String,
+    val skillName: String,
+    val modifiedAtMillis: Long
 )
 
 class HistoryStore(context: Context) {
     private val appContext = context.applicationContext
     private val file = File(appContext.filesDir, "history.json")
     private val resultsDir = File(appContext.filesDir, "skill_results").also { it.mkdirs() }
+    private val thumbnailsDir = File(appContext.filesDir, "thumbnails").also { it.mkdirs() }
     private val lock = Any()
+    private var cachedEntries: List<HistoryEntry>? = null
+
+    fun thumbnailFile(transcriptId: String): File =
+        File(thumbnailsDir, "$transcriptId.jpg")
 
     fun list(): List<HistoryEntry> = synchronized(lock) {
         loadEntries().sortedByDescending { it.createdAt }
@@ -41,26 +59,29 @@ class HistoryStore(context: Context) {
         durationSeconds: Double = 0.0,
         id: String = UUID.randomUUID().toString()
     ): HistoryEntry {
-        val entry = HistoryEntry(
-            id = id,
-            filename = filename,
-            srtPath = srtPath,
-            preview = preview.take(400),
-            language = language,
-            durationSeconds = durationSeconds,
-            createdAt = System.currentTimeMillis()
-        )
         synchronized(lock) {
             val list = loadEntries().toMutableList()
-            // Deduplicate by srt path — refresh existing
             val idx = list.indexOfFirst { it.srtPath == srtPath }
+            val entryId = if (idx >= 0) list[idx].id else id
             if (idx >= 0) {
-                list[idx] = entry.copy(id = list[idx].id, createdAt = list[idx].createdAt)
+                deleteThumbnailFile(list[idx])
+            }
+            val entry = HistoryEntry(
+                id = entryId,
+                filename = filename,
+                srtPath = srtPath,
+                preview = preview.take(400),
+                language = language,
+                durationSeconds = durationSeconds,
+                createdAt = if (idx >= 0) list[idx].createdAt else System.currentTimeMillis()
+            )
+            if (idx >= 0) {
+                list[idx] = entry
             } else {
                 list.add(entry)
             }
             persist(list)
-            return if (idx >= 0) list[idx] else entry
+            return entry
         }
     }
 
@@ -77,8 +98,10 @@ class HistoryStore(context: Context) {
 
     fun delete(id: String): Boolean = synchronized(lock) {
         val list = loadEntries().toMutableList()
+        val existing = list.find { it.id == id }
         val removed = list.removeAll { it.id == id }
         if (removed) {
+            existing?.let { deleteThumbnailFile(it) }
             persist(list)
             resultsDir.listFiles()?.filter { it.name.startsWith("${id}_") }?.forEach { it.delete() }
         }
@@ -100,12 +123,46 @@ class HistoryStore(context: Context) {
         }
     }
 
+    /** Cached skill runs for [transcriptId], newest first (excludes system Catalog). */
+    fun listCachedSkillRuns(transcriptId: String): List<CachedSkillRun> {
+        if (transcriptId.isBlank()) return emptyList()
+        val prefix = "${transcriptId}_"
+        val files = resultsDir.listFiles()
+            ?.filter { it.isFile && it.name.startsWith(prefix) && it.name.endsWith(".json") }
+            .orEmpty()
+        return files.mapNotNull { f ->
+            val skillId = f.name.removePrefix(prefix).removeSuffix(".json")
+            if (skillId.isBlank() || skillId == "builtin_catalog") return@mapNotNull null
+            val skillName = try {
+                JSONObject(f.readText()).optString("skillName").ifBlank { skillId }
+            } catch (_: Exception) {
+                skillId
+            }
+            CachedSkillRun(
+                skillId = skillId,
+                skillName = skillName,
+                modifiedAtMillis = f.lastModified()
+            )
+        }.sortedByDescending { it.modifiedAtMillis }
+    }
+
+    private fun deleteThumbnailFile(entry: HistoryEntry) {
+        if (entry.thumbnailPath.isNotBlank()) {
+            File(entry.thumbnailPath).delete()
+        }
+        thumbnailFile(entry.id).delete()
+    }
+
     private fun resultFile(transcriptId: String, skillId: String): File =
         File(resultsDir, "${transcriptId}_${skillId}.json")
 
     private fun loadEntries(): List<HistoryEntry> {
-        if (!file.exists()) return emptyList()
-        return try {
+        cachedEntries?.let { return it }
+        if (!file.exists()) {
+            cachedEntries = emptyList()
+            return emptyList()
+        }
+        val loaded = try {
             val arr = JSONArray(file.readText())
             buildList {
                 for (i in 0 until arr.length()) {
@@ -118,7 +175,10 @@ class HistoryStore(context: Context) {
                             preview = o.optString("preview"),
                             language = o.optString("language"),
                             durationSeconds = o.optDouble("durationSeconds", 0.0),
-                            createdAt = o.optLong("createdAt", 0L)
+                            createdAt = o.optLong("createdAt", 0L),
+                            title = o.optString("title"),
+                            summary = o.optString("summary"),
+                            thumbnailPath = o.optString("thumbnailPath")
                         )
                     )
                 }
@@ -126,9 +186,12 @@ class HistoryStore(context: Context) {
         } catch (_: Exception) {
             emptyList()
         }
+        cachedEntries = loaded
+        return loaded
     }
 
     private fun persist(entries: List<HistoryEntry>) {
+        cachedEntries = entries.toList()
         val arr = JSONArray()
         entries.forEach { e ->
             arr.put(
@@ -140,6 +203,9 @@ class HistoryStore(context: Context) {
                     .put("language", e.language)
                     .put("durationSeconds", e.durationSeconds)
                     .put("createdAt", e.createdAt)
+                    .put("title", e.title)
+                    .put("summary", e.summary)
+                    .put("thumbnailPath", e.thumbnailPath)
             )
         }
         file.writeText(arr.toString(2))

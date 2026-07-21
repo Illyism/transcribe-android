@@ -3,10 +3,10 @@ package com.illyism.transcribe
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,20 +31,31 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
+import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
+import androidx.compose.material3.adaptive.layout.calculatePaneScaffoldDirective
+import androidx.compose.material3.adaptive.navigation3.ListDetailSceneStrategy
+import androidx.compose.material3.adaptive.navigation3.rememberListDetailSceneStrategy
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
+import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
 import com.illyism.transcribe.domain.skills.SkillRunResult
 import com.illyism.transcribe.ui.TranscribeViewModel
+import com.illyism.transcribe.ui.adaptive.HistoryDetailPlaceholder
 import com.illyism.transcribe.ui.nav.AppKey
+import com.illyism.transcribe.ui.nav.DeepLinks
 import com.illyism.transcribe.ui.nav.Navigator
+import com.illyism.transcribe.ui.nav.RequireOrBack
 import com.illyism.transcribe.ui.nav.TOP_LEVEL_KEYS
 import com.illyism.transcribe.ui.nav.rememberNavigationState
 import com.illyism.transcribe.ui.nav.toEntries
@@ -66,11 +77,14 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     private val viewModel: TranscribeViewModel by viewModels()
     private val skillsViewModel: SkillsViewModel by viewModels()
+    private val pendingDeepLink = mutableStateOf<Uri?>(null)
 
+    @OptIn(ExperimentalMaterial3AdaptiveApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
+        pendingDeepLink.value = intent?.data
 
         setContent {
             TranscribeTheme {
@@ -85,15 +99,35 @@ class MainActivity : ComponentActivity() {
                 )
                 val navigator = remember { Navigator(navState) }
 
+                val deepLinkUri by pendingDeepLink
+                LaunchedEffect(deepLinkUri) {
+                    val uri = deepLinkUri ?: return@LaunchedEffect
+                    pendingDeepLink.value = null
+                    handleDeepLink(uri, navigator)
+                }
+
+                // History list-detail on medium/expanded width (Material Nav3 scene).
+                val windowAdaptiveInfo = currentWindowAdaptiveInfo()
+                val paneDirective = remember(windowAdaptiveInfo) {
+                    calculatePaneScaffoldDirective(windowAdaptiveInfo)
+                        .copy(horizontalPartitionSpacerSize = 0.dp)
+                }
+                val listDetailStrategy = rememberListDetailSceneStrategy<NavKey>(
+                    directive = paneDirective
+                )
+                val isWideWidth = windowAdaptiveInfo.windowSizeClass
+                    .isWidthAtLeastBreakpoint(WIDTH_DP_MEDIUM_LOWER_BOUND)
+
+                fun share(intent: Intent, title: String) {
+                    startActivity(Intent.createChooser(intent, title))
+                }
+
                 val picker = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.OpenDocument()
                 ) { uri ->
                     if (uri != null) {
                         viewModel.onVideoPicked(uri)
-                        if (navState.topLevelRoute != AppKey.Home) {
-                            navigator.navigate(AppKey.Home)
-                        }
-                        // Avoid stacking Selected repeatedly.
+                        navigator.ensureTopLevel(AppKey.Home)
                         if (navigator.currentKey() != AppKey.Selected) {
                             navigator.navigate(AppKey.Selected)
                         }
@@ -125,67 +159,31 @@ class MainActivity : ComponentActivity() {
                     skillsViewModel.consumeSnackbar()
                 }
 
-                // Pipeline finished → open TranscriptDetail(id), replacing Processing.
                 LaunchedEffect(Unit) {
                     viewModel.finishedTranscriptId.collect { id ->
-                        if (navState.topLevelRoute != AppKey.Home) {
-                            navigator.navigate(AppKey.Home)
-                        }
-                        when (navigator.currentKey()) {
-                            is AppKey.Processing,
-                            is AppKey.Selected,
-                            is AppKey.TranscriptDetail ->
-                                navigator.replaceTop(AppKey.TranscriptDetail(id))
-                            else -> navigator.navigate(AppKey.TranscriptDetail(id))
-                        }
+                        navigator.openFinishedTranscript(id)
                     }
                 }
 
-                // Cold-start restore when an active job / selection exists.
                 LaunchedEffect(Unit) {
                     viewModel.restoreNav.collect { restore ->
                         when (restore) {
-                            TranscribeViewModel.RestoreNav.Selected -> {
-                                if (navState.topLevelRoute != AppKey.Home) {
-                                    navigator.navigate(AppKey.Home)
-                                }
-                                if (navigator.currentKey() !is AppKey.Selected &&
-                                    navigator.currentKey() !is AppKey.Processing &&
-                                    navigator.currentKey() !is AppKey.TranscriptDetail
-                                ) {
-                                    navigator.navigate(AppKey.Selected)
-                                }
-                            }
-                            TranscribeViewModel.RestoreNav.Processing -> {
-                                if (navState.topLevelRoute != AppKey.Home) {
-                                    navigator.navigate(AppKey.Home)
-                                }
-                                when (navigator.currentKey()) {
-                                    is AppKey.Processing -> Unit
-                                    is AppKey.Selected ->
-                                        navigator.replaceTop(AppKey.Processing)
-                                    else -> navigator.navigate(AppKey.Processing)
-                                }
-                            }
-                            is TranscribeViewModel.RestoreNav.Transcript -> {
-                                if (navState.topLevelRoute != AppKey.Home) {
-                                    navigator.navigate(AppKey.Home)
-                                }
-                                navigator.navigate(AppKey.TranscriptDetail(restore.id))
-                            }
+                            TranscribeViewModel.RestoreNav.Selected -> navigator.openSelected()
+                            TranscribeViewModel.RestoreNav.Processing -> navigator.openProcessing()
                         }
                     }
                 }
 
-                // Read SnapshotState fields so the bar recomposes with the stack.
+                // Snapshot reads so the bar recomposes with tab/stack changes.
                 val topLevel = navState.topLevelRoute
                 val currentKey = navState.backStacks[topLevel]?.lastOrNull()
-                val showBottomBar = currentKey is AppKey.Home ||
-                    currentKey is AppKey.History ||
-                    currentKey is AppKey.Skills
+                // Keep bottom nav on tablet History list-detail (detail is top of stack).
+                val showBottomBar = currentKey in TOP_LEVEL_KEYS ||
+                    (isWideWidth &&
+                        topLevel == AppKey.History &&
+                        currentKey is AppKey.TranscriptDetail)
 
                 fun openSkillForTranscript(skillId: String) {
-                    // Prefer the most recent history entry when opened from Skills tab.
                     val id = state.history.firstOrNull()?.id
                     if (id.isNullOrBlank()) {
                         viewModel.showMessage("Open a transcript from History first")
@@ -208,7 +206,11 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    entry<AppKey.History> {
+                    entry<AppKey.History>(
+                        metadata = ListDetailSceneStrategy.listPane(
+                            detailPlaceholder = { HistoryDetailPlaceholder() }
+                        )
+                    ) {
                         HistoryScreen(
                             entries = state.history,
                             onOpen = { id ->
@@ -217,9 +219,10 @@ class MainActivity : ComponentActivity() {
                                     viewModel.showMessage("Transcript file missing")
                                     return@HistoryScreen
                                 }
-                                navigator.navigate(AppKey.TranscriptDetail(id))
+                                navigator.openHistoryDetail(id)
                             },
-                            onDelete = viewModel::deleteHistoryEntry
+                            onDelete = viewModel::deleteHistoryEntry,
+                            onRefresh = viewModel::refreshHistory
                         )
                     }
 
@@ -227,26 +230,14 @@ class MainActivity : ComponentActivity() {
                         SkillsScreen(
                             customSkills = skillsState.customSkills,
                             builtIns = skillsState.builtIns,
-                            onNewSkill = {
-                                skillsViewModel.startNewSkill()
-                                navigator.navigate(AppKey.SkillEditor())
-                            },
+                            onNewSkill = { navigator.navigate(AppKey.SkillEditor()) },
                             onOpenSkill = ::openSkillForTranscript,
-                            onEdit = { id ->
-                                skillsViewModel.editSkill(id)
-                                navigator.navigate(AppKey.SkillEditor(id))
-                            },
+                            onEdit = { id -> navigator.navigate(AppKey.SkillEditor(id)) },
                             onDuplicate = skillsViewModel::duplicate,
                             onDelete = skillsViewModel::delete,
                             onExport = { id ->
                                 pendingExportSkillId = id
-                                val name = skillsViewModel.state.value.builtIns
-                                    .plus(skillsViewModel.state.value.customSkills)
-                                    .find { it.id == id }
-                                    ?.name
-                                    ?.replace(Regex("[^a-zA-Z0-9._-]"), "_")
-                                    ?: "skill"
-                                exportSkill.launch("$name.json")
+                                exportSkill.launch(skillsViewModel.exportFilename(id))
                             },
                             onImport = {
                                 importSkill.launch(arrayOf("application/json", "text/*", "*/*"))
@@ -255,10 +246,7 @@ class MainActivity : ComponentActivity() {
                     }
 
                     entry<AppKey.Selected> {
-                        val selected = state.selected
-                        if (selected == null) {
-                            LaunchedEffect(Unit) { navigator.goBack() }
-                        } else {
+                        RequireOrBack(state.selected, navigator::goBack) { selected ->
                             SelectedScreen(
                                 name = selected.displayName,
                                 sizeBytes = selected.sizeBytes,
@@ -278,10 +266,6 @@ class MainActivity : ComponentActivity() {
                     }
 
                     entry<AppKey.Processing> {
-                        BackHandler {
-                            viewModel.cancelActiveJob()
-                            navigator.goBack()
-                        }
                         ProcessingScreen(
                             stage = state.stage,
                             percent = state.percent,
@@ -291,11 +275,7 @@ class MainActivity : ComponentActivity() {
                             audioBytes = state.audioBytes,
                             message = state.message,
                             error = state.error,
-                            onRetry = {
-                                if (viewModel.retryTranscription()) {
-                                    // stay on Processing
-                                }
-                            },
+                            onRetry = { viewModel.startTranscription() },
                             onChooseDifferent = {
                                 viewModel.chooseDifferent()
                                 navigator.clearToRoot()
@@ -303,21 +283,33 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    entry<AppKey.TranscriptDetail> { key ->
-                        val entry = viewModel.transcript(key.transcriptId)
-                        if (entry == null) {
-                            LaunchedEffect(key.transcriptId) { navigator.goBack() }
-                        } else {
+                    entry<AppKey.TranscriptDetail>(
+                        metadata = ListDetailSceneStrategy.detailPane()
+                    ) { key ->
+                        // Hide back in History two-pane; keep it for Home / compact.
+                        val showBack = !(isWideWidth && topLevel == AppKey.History)
+                        val skillRuns = viewModel.listCachedSkillRuns(key.transcriptId)
+                        RequireOrBack(
+                            viewModel.transcript(key.transcriptId),
+                            navigator::goBack
+                        ) { entry ->
                             DoneScreen(
                                 srtPath = entry.srtPath,
                                 preview = entry.preview,
                                 language = entry.language.takeIf { it.isNotBlank() },
                                 durationSeconds = entry.durationSeconds,
                                 saveLocationLabel = viewModel.friendlySaveLocation(entry.srtPath),
+                                skillRuns = skillRuns,
                                 onExport = { format ->
                                     viewModel.exportAndShare(key.transcriptId, format) { intent ->
-                                        startActivity(Intent.createChooser(intent, "Share transcript"))
+                                        share(intent, "Share transcript")
                                     }
+                                },
+                                onCopyLink = {
+                                    viewModel.copyText(
+                                        DeepLinks.transcriptUri(key.transcriptId),
+                                        snackbar = "Link copied"
+                                    )
                                 },
                                 onCopyText = viewModel::copyText,
                                 onRename = { name ->
@@ -327,11 +319,18 @@ class MainActivity : ComponentActivity() {
                                     skillsViewModel.refresh()
                                     navigator.navigate(AppKey.SkillPicker(key.transcriptId))
                                 },
+                                onOpenSkillResult = { skillId ->
+                                    skillsViewModel.loadCachedResult(key.transcriptId, skillId)
+                                    navigator.navigate(
+                                        AppKey.SkillResults(key.transcriptId, skillId)
+                                    )
+                                },
                                 onAnother = {
-                                    viewModel.transcribeAnother()
+                                    viewModel.chooseDifferent()
                                     navigator.clearToRoot()
                                 },
-                                onBack = navigator::goBack
+                                onBack = navigator::goBack,
+                                showBack = showBack
                             )
                         }
                     }
@@ -381,10 +380,7 @@ class MainActivity : ComponentActivity() {
                                 skillsViewModel.startNewSkill()
                             }
                         }
-                        val editing = skillsState.editing
-                        if (editing == null) {
-                            LaunchedEffect(Unit) { navigator.goBack() }
-                        } else {
+                        RequireOrBack(skillsState.editing, navigator::goBack) { editing ->
                             SkillEditorScreen(
                                 skill = editing,
                                 onChange = skillsViewModel::updateEditing,
@@ -453,67 +449,78 @@ class MainActivity : ComponentActivity() {
                     }
 
                     entry<AppKey.SkillResults> { key ->
-                        BackHandler(enabled = skillsState.running) {
-                            skillsViewModel.cancelRun()
-                            navigator.goBack()
+                        LaunchedEffect(key.transcriptId, key.skillId) {
+                            if (!skillsState.running ||
+                                skillsState.activeSkill?.id != key.skillId
+                            ) {
+                                skillsViewModel.loadCachedResult(key.transcriptId, key.skillId)
+                            }
                         }
                         val activeSkill = skillsState.activeSkill
-                        val cached = remember(key.transcriptId, key.skillId) {
-                            (application as TranscribeApp).historyStore
-                                .getCachedSkillResult(key.transcriptId, key.skillId)
+                        val cached = remember(
+                            key.transcriptId,
+                            key.skillId,
+                            skillsState.result?.skillId
+                        ) {
+                            skillsViewModel.cachedSkillResult(key.transcriptId, key.skillId)
                         }
-                        val displayResult = skillsState.result
-                            ?: activeSkill?.let { skill ->
+                        val displayResult = when {
+                            skillsState.result?.skillId == key.skillId -> skillsState.result
+                            skillsState.running && activeSkill?.id == key.skillId ->
                                 SkillRunResult(
-                                    skillId = skill.id,
-                                    skillName = skill.name,
+                                    skillId = activeSkill.id,
+                                    skillName = activeSkill.name,
                                     outputs = skillsState.streamingOutputs,
                                     reasoning = skillsState.streamingReasoning
                                         .takeIf { it.isNotBlank() }
                                 )
-                            }
-                            ?: cached
+                            else -> cached
+                        }
 
-                        if (displayResult == null && !skillsState.running) {
-                            LaunchedEffect(Unit) { navigator.goBack() }
-                        } else if (displayResult != null) {
-                            SkillResultsScreen(
-                                result = displayResult,
-                                running = skillsState.running,
-                                error = skillsState.error,
-                                onCopy = skillsViewModel::copyOutput,
-                                onShare = { text, title ->
-                                    skillsViewModel.shareText(text, title)?.let {
-                                        startActivity(Intent.createChooser(it, title))
+                        RequireOrBack(
+                            ok = displayResult != null ||
+                                (skillsState.running && activeSkill?.id == key.skillId),
+                            goBack = navigator::goBack
+                        ) {
+                            if (displayResult != null) {
+                                SkillResultsScreen(
+                                    result = displayResult,
+                                    running = skillsState.running,
+                                    error = skillsState.error,
+                                    onCopy = skillsViewModel::copyOutput,
+                                    onShare = { text, title ->
+                                        skillsViewModel.shareText(text, title)?.let {
+                                            share(it, title)
+                                        }
+                                    },
+                                    onExportAll = {
+                                        skillsViewModel.exportAllMarkdown()?.let {
+                                            share(it, "Export")
+                                        }
+                                    },
+                                    onShareAll = {
+                                        skillsViewModel.shareAll()?.let {
+                                            share(it, "Share all")
+                                        }
+                                    },
+                                    onCancel = {
+                                        skillsViewModel.cancelRun()
+                                        navigator.goBack()
+                                    },
+                                    onBack = {
+                                        if (skillsState.running) skillsViewModel.cancelRun()
+                                        navigator.goBack()
+                                    },
+                                    onDone = {
+                                        if (!navigator.popTo { it is AppKey.TranscriptDetail }) {
+                                            navigator.clearToRoot()
+                                            navigator.navigate(
+                                                AppKey.TranscriptDetail(key.transcriptId)
+                                            )
+                                        }
                                     }
-                                },
-                                onExportAll = {
-                                    skillsViewModel.exportAllMarkdown()?.let {
-                                        startActivity(Intent.createChooser(it, "Export"))
-                                    }
-                                },
-                                onShareAll = {
-                                    skillsViewModel.shareAll()?.let {
-                                        startActivity(Intent.createChooser(it, "Share all"))
-                                    }
-                                },
-                                onCancel = {
-                                    skillsViewModel.cancelRun()
-                                    navigator.goBack()
-                                },
-                                onBack = {
-                                    if (skillsState.running) skillsViewModel.cancelRun()
-                                    navigator.goBack()
-                                },
-                                onDone = {
-                                    if (!navigator.popTo { it is AppKey.TranscriptDetail }) {
-                                        navigator.clearToRoot()
-                                        navigator.navigate(
-                                            AppKey.TranscriptDetail(key.transcriptId)
-                                        )
-                                    }
-                                }
-                            )
+                                )
+                            }
                         }
                     }
                 } as (androidx.navigation3.runtime.NavKey) -> androidx.navigation3.runtime.NavEntry<androidx.navigation3.runtime.NavKey>
@@ -577,6 +584,7 @@ class MainActivity : ComponentActivity() {
                                 }
                                 navigator.goBack()
                             },
+                            sceneStrategy = listDetailStrategy,
                             transitionSpec = {
                                 slideInHorizontally(
                                     initialOffsetX = { it },
@@ -608,6 +616,39 @@ class MainActivity : ComponentActivity() {
                     }
                 }
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingDeepLink.value = intent.data
+    }
+
+    private fun handleDeepLink(uri: Uri, navigator: Navigator) {
+        when (val target = DeepLinks.parse(uri)) {
+            is DeepLinks.Target.Transcript -> {
+                if (viewModel.transcript(target.transcriptId) == null) {
+                    navigator.navigate(AppKey.History)
+                    viewModel.showMessage("Transcript not found")
+                    return
+                }
+                navigator.openFromDeepLink(target.transcriptId)
+            }
+            is DeepLinks.Target.SkillResult -> {
+                if (viewModel.transcript(target.transcriptId) == null) {
+                    navigator.navigate(AppKey.History)
+                    viewModel.showMessage("Transcript not found")
+                    return
+                }
+                if (!skillsViewModel.loadCachedResult(target.transcriptId, target.skillId)) {
+                    navigator.openFromDeepLink(target.transcriptId)
+                    viewModel.showMessage("Skill result not found")
+                    return
+                }
+                navigator.openFromDeepLink(target.transcriptId, target.skillId)
+            }
+            null -> Unit
         }
     }
 

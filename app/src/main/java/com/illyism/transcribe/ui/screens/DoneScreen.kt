@@ -22,6 +22,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ClosedCaption
@@ -31,10 +32,12 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.illyism.transcribe.data.CachedSkillRun
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -82,12 +85,17 @@ fun DoneScreen(
     language: String?,
     durationSeconds: Double,
     saveLocationLabel: String,
+    skillRuns: List<CachedSkillRun> = emptyList(),
     onExport: (ExportFormat) -> Unit,
+    onCopyLink: () -> Unit,
     onCopyText: (String) -> Unit,
     onRename: (String) -> Unit,
     onCreateSomething: () -> Unit,
+    onOpenSkillResult: (String) -> Unit = {},
     onAnother: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    /** False in History list-detail (tablet) where the list remains visible. */
+    showBack: Boolean = true,
 ) {
     val scheme = MaterialTheme.colorScheme
     val file = File(srtPath)
@@ -118,14 +126,21 @@ fun DoneScreen(
                 .padding(horizontal = 8.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+            if (showBack) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                }
+            } else {
+                Spacer(modifier = Modifier.width(12.dp))
             }
             Text(
                 "Transcribe",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.weight(1f)
             )
+            IconButton(onClick = onCopyLink) {
+                Icon(Icons.Outlined.Link, contentDescription = "Copy link")
+            }
         }
 
         Column(
@@ -231,6 +246,30 @@ fun DoneScreen(
                             fontWeight = FontWeight.Medium
                         )
                     )
+                }
+            }
+
+            if (skillRuns.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(20.dp))
+                Text(
+                    "Creations",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(scheme.surfaceVariant),
+                    verticalArrangement = Arrangement.spacedBy(0.dp)
+                ) {
+                    skillRuns.forEachIndexed { index, run ->
+                        SkillRunRow(
+                            run = run,
+                            showDivider = index < skillRuns.lastIndex,
+                            onClick = { onOpenSkillResult(run.skillId) }
+                        )
+                    }
                 }
             }
 
@@ -348,6 +387,68 @@ fun DoneScreen(
             },
             onCopy = onCopyText
         )
+    }
+}
+
+@Composable
+private fun SkillRunRow(
+    run: CachedSkillRun,
+    showDivider: Boolean,
+    onClick: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 14.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Outlined.AutoAwesome,
+                contentDescription = null,
+                tint = scheme.primary,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                "${run.skillName} · ${formatRelativeTime(run.modifiedAtMillis)}",
+                style = MaterialTheme.typography.bodyLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                contentDescription = null,
+                tint = scheme.onSurfaceVariant
+            )
+        }
+        if (showDivider) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 46.dp)
+                    .height(1.dp)
+                    .background(scheme.outlineVariant.copy(alpha = 0.4f))
+            )
+        }
+    }
+}
+
+private fun formatRelativeTime(millis: Long, now: Long = System.currentTimeMillis()): String {
+    val diff = (now - millis).coerceAtLeast(0L)
+    val minutes = diff / 60_000L
+    val hours = diff / 3_600_000L
+    val days = diff / 86_400_000L
+    return when {
+        minutes < 1L -> "just now"
+        minutes < 60L -> "${minutes}m ago"
+        hours < 24L -> "${hours}h ago"
+        days < 30L -> "${days}d ago"
+        else -> java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
+            .format(java.util.Date(millis))
     }
 }
 

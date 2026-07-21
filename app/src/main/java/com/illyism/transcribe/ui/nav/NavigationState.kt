@@ -2,11 +2,11 @@ package com.illyism.transcribe.ui.nav
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSerializable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.snapshots.SnapshotStateList
 import androidx.compose.runtime.toMutableStateList
 import androidx.navigation3.runtime.NavBackStack
@@ -18,13 +18,11 @@ import androidx.navigation3.runtime.rememberSaveableStateHolderNavEntryDecorator
 import androidx.navigation3.runtime.serialization.NavKeySerializer
 import androidx.savedstate.compose.serialization.serializers.MutableStateSerializer
 
-/**
- * Create a navigation state that persists config changes and process death.
- */
+/** Persists top-level tab + per-tab back stacks across config changes / process death. */
 @Composable
 fun rememberNavigationState(
     startRoute: NavKey,
-    topLevelRoutes: Set<NavKey>
+    topLevelRoutes: Set<out NavKey>
 ): NavigationState {
     val topLevelRoute = rememberSerializable(
         startRoute, topLevelRoutes,
@@ -45,11 +43,9 @@ fun rememberNavigationState(
 }
 
 /**
- * State holder for navigation state.
+ * Multi-tab Nav3 state (exit-through-home).
  *
- * @param startRoute - the start route. The user will exit the app through this route.
- * @param topLevelRoute - the current top level route
- * @param backStacks - the back stacks for each top level route
+ * Non-start tabs are shown as start-stack + active-tab stack.
  */
 class NavigationState(
     val startRoute: NavKey,
@@ -65,9 +61,6 @@ class NavigationState(
         }
 }
 
-/**
- * Convert NavigationState into NavEntries.
- */
 @Composable
 fun NavigationState.toEntries(
     entryProvider: (NavKey) -> NavEntry<NavKey>

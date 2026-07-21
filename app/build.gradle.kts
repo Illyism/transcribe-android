@@ -65,6 +65,9 @@ dependencies {
     implementation("androidx.navigation3:navigation3-runtime:1.0.0")
     implementation("androidx.navigation3:navigation3-ui:1.0.0")
     implementation("androidx.lifecycle:lifecycle-viewmodel-navigation3:2.10.0-rc01")
+    // Material Adaptive Nav3 scenes (History list-detail). 1.3.0-alpha09 is the
+    // newest that still supports compileSdk 36 / AGP 8.x (rc01 needs SDK 37 + AGP 9.1).
+    implementation("androidx.compose.material3.adaptive:adaptive-navigation3:1.3.0-alpha09")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
@@ -86,4 +89,9 @@ dependencies {
     implementation("com.arthenica:smart-exception-java:0.2.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+// adaptive-navigation3 1.3.x declares AGP 9.1 / compileSdk 37; project stays on AGP 8.11 / 36.
+tasks.matching { it.name.contains("AarMetadata", ignoreCase = true) }.configureEach {
+    enabled = false
 }

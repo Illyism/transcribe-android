@@ -115,8 +115,9 @@ fun SkillResultsScreen(
             state = listState,
             modifier = Modifier
                 .weight(1f)
+                .fillMaxWidth()
                 .padding(horizontal = 20.dp),
-            contentPadding = PaddingValues(bottom = 16.dp),
+            contentPadding = PaddingValues(top = 4.dp, bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             if (running) {
@@ -151,18 +152,25 @@ fun SkillResultsScreen(
             if (running) {
                 SecondaryButton(text = "Cancel", onClick = onCancel)
             } else {
-                if (result.outputs.size > 1) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (result.outputs.size > 1) {
+                        SecondaryButton(
+                            text = "Share all",
+                            onClick = onShareAll,
+                            icon = Icons.Outlined.Share,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     SecondaryButton(
-                        text = "Share all",
-                        onClick = onShareAll,
-                        icon = Icons.Outlined.Share
+                        text = if (result.outputs.size > 1) "Export" else "Export markdown",
+                        onClick = onExportAll,
+                        icon = Icons.Outlined.IosShare,
+                        modifier = Modifier.weight(1f)
                     )
                 }
-                SecondaryButton(
-                    text = "Export markdown",
-                    onClick = onExportAll,
-                    icon = Icons.Outlined.IosShare
-                )
                 PrimaryButton(
                     text = "Done",
                     onClick = onDone,

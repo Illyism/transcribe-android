@@ -2,6 +2,7 @@ package com.illyism.transcribe.data
 
 import android.content.Context
 import android.net.Uri
+import org.json.JSONException
 import org.json.JSONObject
 
 /**
@@ -71,7 +72,7 @@ class TranscribeSessionStore(context: Context) {
                 audioBytes = o.optLong("audioBytes"),
                 message = o.optString("message")
             )
-        } catch (_: Exception) {
+        } catch (_: JSONException) {
             null
         }
     }

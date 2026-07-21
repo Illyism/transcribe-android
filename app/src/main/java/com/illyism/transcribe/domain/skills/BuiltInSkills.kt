@@ -91,7 +91,36 @@ If the answer is not in the transcript, say so clearly.
         estimatedRuntime = "~20s"
     )
 
+    /**
+     * System skill: runs automatically after transcription to enrich History.
+     * Hidden from Skills picker / Creations.
+     */
+    val catalog = Skill(
+        id = "builtin_catalog",
+        name = "Catalog",
+        description = "Generate a short title and two-line summary for History.",
+        icon = "sparkles",
+        color = "#E8A838",
+        prompt = """
+Write a catalog card for this transcript for a history list.
+Be factual — do not invent details not present in the transcript.
+Do not use the raw filename as the title.
+title: a specific human title, at most 60 characters, no quotes.
+summary: exactly two short lines (use a newline between them) that describe what the content is about.
+""".trimIndent(),
+        outputs = listOf(
+            SkillOutput("title", "Title", SkillOutputType.MARKDOWN, "≤60 characters"),
+            SkillOutput("summary", "Summary", SkillOutputType.MARKDOWN, "Exactly two short lines")
+        ),
+        category = SkillCategory.CUSTOM,
+        builtIn = true,
+        estimatedRuntime = "~15s",
+        defaultTier = "TERRA_LIGHT"
+    )
+
+    /** User-visible built-ins (excludes system Catalog). */
     val all: List<Skill> = listOf(repurpose, studyGuide, findHighlights, askAi)
 
-    fun byId(id: String): Skill? = all.find { it.id == id }
+    fun byId(id: String): Skill? =
+        if (id == catalog.id) catalog else all.find { it.id == id }
 }

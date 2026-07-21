@@ -32,7 +32,7 @@ app/src/main/java/com/illyism/transcribe/
     SettingsRepository.kt      # Encrypted prefs (API key, chunk, parallel, raw, skillModelTier)
     TranscribeSessionStore.kt  # Active job only (selected + progress/error)
     SkillRepository.kt         # Built-ins + custom skills → skills.json
-    HistoryStore.kt            # Transcripts + cached skill results (source of truth)
+    HistoryStore.kt            # Transcripts + title/summary/thumb + cached skill results
   domain/
     FfmpegProcessor.kt         # extract / optimize / chunk
     WhisperClient.kt           # parallel-safe HTTP client
@@ -51,7 +51,8 @@ app/src/main/java/com/illyism/transcribe/
     nav/
       Routes.kt                # @Serializable AppKey : NavKey (entity-ID routes)
       NavigationState.kt       # Per-tab rememberNavBackStack holder
-      Navigator.kt             # navigate / goBack / replaceTop / clearToRoot
+      Navigator.kt             # navigate / goBack / replaceTop / clearToRoot / openFromDeepLink
+      DeepLinks.kt             # transcribe:// URI parse + share intent
     skills/
       SkillsViewModel.kt       # Skill CRUD + run state
       SkillsScreen.kt / SkillEditorScreen.kt / SkillRunScreen.kt /
@@ -67,7 +68,10 @@ app/src/main/java/com/illyism/transcribe/
 - Screens are addressed by ID: `TranscriptDetail(transcriptId)`, `SkillPicker(transcriptId)`, `SkillRun(transcriptId, skillId)`, `SkillResults(transcriptId, skillId)`, `SkillEditor(skillId?)`.
 - Finished transcripts load from `HistoryStore.get(id)` — not mirrored in `UiState`.
 - On pipeline DONE, ViewModel appends to HistoryStore and emits `finishedTranscriptId`; UI replaces `Processing` with `TranscriptDetail(id)`.
+- TranscriptDetail lists cached skill runs (`HistoryStore.listCachedSkillRuns`) under **Creations**; tap → `SkillResults(transcriptId, skillId)` (loads cache if no in-memory result).
 - `TranscribeSessionStore` only holds the ephemeral active job (selected video + progress/error).
+- Deep links (`MainActivity` `singleTop` + `DeepLinks.kt`): `transcribe://transcript/{id}` → History → `TranscriptDetail`; `transcribe://skill/{transcriptId}/{skillId}` → History → detail → `SkillResults` (cached result required). Missing transcript → snackbar "Transcript not found". Transcript detail copies the app-scheme URI to the clipboard (not system share — `transcribe://` only opens this app).
+- **Adaptive History list-detail** (medium/expanded width): Material `ListDetailSceneStrategy` (`adaptive-navigation3:1.3.0-alpha09`, compileSdk 36–compatible) on `NavDisplay`. `History` = list pane, `TranscriptDetail` = detail pane; compact width keeps single-pane push. Selecting an item uses `Navigator.openHistoryDetail` (replace detail). Back clears detail first on tablet; DoneScreen hides back when History is wide. Home/Skills adaptive panes are out of scope for v1.
 
 ## Pipeline (must match CLI intent)
 
@@ -78,6 +82,7 @@ app/src/main/java/com/illyism/transcribe/
 5. Merge segments with speed/offset correction → write `.srt` under app external files
 6. Delete temp audio/chunks in `finally`
 7. On DONE, append to `HistoryStore` so Skills can reuse the transcript
+8. Best-effort **Catalog enrich**: extract a local video thumbnail (`filesDir/thumbnails/{id}.jpg`) and run hidden built-in `builtin_catalog` via `SkillRunner` / `CatalogEnricher` (`TERRA_LIGHT`) to fill `HistoryEntry.title` (≤60) + `summary` (two lines). Failures leave filename + SRT preview as fallbacks. Catalog is not listed under Skills / Creations.
 
 Progress stages: `EXTRACTING` → `OPTIMIZING` → `CHUNKING` → `TRANSCRIBING` → `SAVING` → `DONE` / `FAILED`.
 
@@ -109,10 +114,11 @@ Request shape: `stream: true` + `instructions` (skill prompt + output contract) 
 }
 ```
 
-- Built-ins: Repurpose (`TERRA_LIGHT`), Find Highlights (`SOL_LIGHT`), Study Guide (`SOL_MEDIUM`), Ask AI (`null` → last-used). See `domain/skills/BuiltInSkills.kt`.
+- Built-ins: Repurpose (`TERRA_LIGHT`), Find Highlights (`SOL_LIGHT`), Study Guide (`SOL_MEDIUM`), Ask AI (`null` → last-used). System-only Catalog (`builtin_catalog`, `TERRA_LIGHT`) auto-runs after DONE for History title/summary — hidden from picker. See `domain/skills/BuiltInSkills.kt`.
 - Custom skills persist under `filesDir/skills.json`; import/export a single skill as `.json` via SAF.
 - Run flow: Done → **Create something** → pick skill → select outputs (or Ask AI prompt) → Generate → result cards (Copy / Share / Export all); collapsible **Reasoning** card when a summary is present.
-- Runs in `viewModelScope` (not WorkManager) for v1; results (including reasoning) cached per `(transcriptId, skillId)`.
+- Runs in `viewModelScope` (not WorkManager) for v1; results (including reasoning) cached per `(transcriptId, skillId)` under `filesDir/skill_results/`.
+- TranscriptDetail **Creations** lists those caches (e.g. `Repurpose · 2h ago`); reopen via `SkillResults` + `SkillsViewModel.loadCachedResult`.
 - Skill run uses `SkillsViewModel.activeTier` (from `Skill.defaultTier` or last-used); changing the picker persists as the global last-used default. Settings still edits that global default.
 
 ### Skills model picker
@@ -133,10 +139,11 @@ Transcription stays `whisper-1` (separate from Skills).
 
 - Material 3 with dynamic color (Material You) on API 31+; follows system light/dark. Amber fallback on older devices.
 - Bottom nav: **Home / History / Skills** (per-tab back stacks; bar hidden on flow screens).
+- History: client-side search by title / filename / summary / preview; rows show thumbnail (or file icon), title (fallback filename), optional filename under title, meta, and two-line summary (fallback SRT preview). Refreshes on tab select and when the list screen appears.
 - One job per screen; no dashboard clutter
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
-- Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): **Export** (pick txt/md/srt → save to `Downloads/Transcribe`, then auto-open Share); **Create something** for Skills; Copy text under the preview
+- Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): **Export** (pick txt/md/srt → save to `Downloads/Transcribe`, then auto-open Share); **Create something** for Skills; **Creations** list of cached skill runs; Copy text under the preview; rename updates `HistoryStore` via `renameSrt`
 
 ## Build & install
 

@@ -20,6 +20,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.illyism.transcribe.TranscribeApp
+import com.illyism.transcribe.data.CachedSkillRun
 import com.illyism.transcribe.data.HistoryEntry
 import com.illyism.transcribe.data.SkillModelTier
 import com.illyism.transcribe.data.TranscribeSessionStore
@@ -27,6 +28,10 @@ import com.illyism.transcribe.domain.ExportFormat
 import com.illyism.transcribe.domain.PipelineStage
 import com.illyism.transcribe.domain.SrtBuilder
 import com.illyism.transcribe.domain.UriMediaAccess
+import com.illyism.transcribe.domain.VideoThumbnailExtractor
+import com.illyism.transcribe.domain.skills.CatalogEnricher
+import com.illyism.transcribe.domain.skills.SkillRunContext
+import com.illyism.transcribe.domain.skills.SkillRunner
 import com.illyism.transcribe.work.TranscribeWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -68,6 +73,7 @@ data class UiState(
 class TranscribeViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as TranscribeApp
     private val workManager = WorkManager.getInstance(application)
+    private val skillRunner = SkillRunner()
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -86,7 +92,6 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     sealed interface RestoreNav {
         data object Selected : RestoreNav
         data object Processing : RestoreNav
-        data class Transcript(val id: String) : RestoreNav
     }
 
     init {
@@ -97,6 +102,9 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun transcript(id: String): HistoryEntry? = app.historyStore.get(id)
+
+    fun listCachedSkillRuns(transcriptId: String): List<CachedSkillRun> =
+        app.historyStore.listCachedSkillRuns(transcriptId)
 
     fun refreshSettings() {
         _state.update {
@@ -212,8 +220,9 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                 0f
                             ).toDouble()
                             if (srt != null) {
-                                val filename = _state.value.selected?.displayName
-                                    ?: app.sessionStore.selectedVideo()?.displayName
+                                val selected = _state.value.selected
+                                    ?: app.sessionStore.selectedVideo()
+                                val filename = selected?.displayName
                                     ?: File(srt).name
                                 val entry = appendToHistory(
                                     filename = filename,
@@ -231,6 +240,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                 }
                                 refreshHistory()
                                 _finishedTranscriptId.emit(entry.id)
+                                enrichHistoryEntry(entry, selected?.uri)
                             }
                         }
                         WorkInfo.State.FAILED -> {
@@ -346,8 +356,6 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         return true
     }
 
-    fun retryTranscription(): Boolean = startTranscription()
-
     /** Cancel in-flight work when leaving the Processing screen. */
     fun cancelActiveJob() {
         workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
@@ -385,6 +393,58 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
+    /**
+     * Best-effort thumbnail + Catalog title/summary after DONE.
+     * Failures leave filename + SRT preview as History fallbacks.
+     */
+    private fun enrichHistoryEntry(entry: HistoryEntry, videoUri: Uri?) {
+        viewModelScope.launch {
+            val thumbPath = withContext(Dispatchers.IO) {
+                if (videoUri == null) return@withContext ""
+                val dest = app.historyStore.thumbnailFile(entry.id)
+                if (VideoThumbnailExtractor.extract(getApplication(), videoUri, dest)) {
+                    dest.absolutePath
+                } else {
+                    ""
+                }
+            }
+            if (thumbPath.isNotBlank()) {
+                app.historyStore.update(entry.id) { it.copy(thumbnailPath = thumbPath) }
+                refreshHistory()
+            }
+
+            val apiKey = app.settings.apiKey
+            if (apiKey.isBlank() || !File(entry.srtPath).exists()) return@launch
+
+            val catalog = withContext(Dispatchers.IO) {
+                runCatching {
+                    CatalogEnricher.run(
+                        runner = skillRunner,
+                        context = SkillRunContext(
+                            transcriptId = entry.id,
+                            filename = entry.filename,
+                            srtPath = entry.srtPath,
+                            language = entry.language,
+                            durationSeconds = entry.durationSeconds
+                        ),
+                        apiKey = apiKey,
+                        tier = SkillModelTier.TERRA_LIGHT
+                    )
+                }.getOrNull()
+            } ?: return@launch
+
+            val (title, summary) = catalog
+            app.historyStore.update(entry.id) {
+                it.copy(
+                    title = title,
+                    summary = summary,
+                    thumbnailPath = it.thumbnailPath.ifBlank { thumbPath }
+                )
+            }
+            refreshHistory()
+        }
+    }
+
     fun chooseDifferent() {
         workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
         workManager.pruneWork()
@@ -401,8 +461,6 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
     }
-
-    fun transcribeAnother() = chooseDifferent()
 
     fun saveApiKey(value: String) {
         app.settings.apiKey = value
@@ -435,12 +493,12 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         refreshSettings()
     }
 
-    fun copyText(text: String) {
+    fun copyText(text: String, snackbar: String = "Copied") {
         if (text.isBlank()) return
         val clipboard = getApplication<Application>()
             .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("transcript", text))
-        _state.update { it.copy(snackbar = "Copied") }
+        _state.update { it.copy(snackbar = snackbar) }
     }
 
     /**
