@@ -100,7 +100,7 @@ Prefer non-blocking `logcat -d`. Visually inspect PNGs from `android screen` bef
 
 ## Known pitfalls
 
-- **FFmpegKit `smartexception`**: if runtime fails with `Failed resolution of: Lcom/arthenica/smartexception/java/Exceptions`, add the missing smart-exception dependency (or switch FFmpegKit artifact) — do not ignore.
+- **FFmpegKit `smartexception`**: `ffmpeg-kit-audio` needs an explicit `com.arthenica:smart-exception-java9` dependency (already in `app/build.gradle.kts`). If you see `Failed resolution of: Lcom/arthenica/smartexception/java/Exceptions`, that dependency was dropped.
 - Device `unauthorized` → user must accept USB debugging prompt.
 - SAF persistable permission: take read permission when picking; keep PFD open for the whole FFmpeg extract.
 - Do not use blocking `adb logcat` without `-d`.
