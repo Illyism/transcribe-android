@@ -71,4 +71,25 @@ object SrtBuilder {
         val s = total % 60
         return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%02d:%02d".format(m, s)
     }
+
+    fun toMarkdown(srt: String, title: String): String {
+        val body = plainText(srt).ifBlank { srt.trim() }
+        return buildString {
+            append("# ")
+            append(title.removeSuffix(".srt").removeSuffix(".SRT"))
+            append("\n\n")
+            append(body)
+            append('\n')
+        }
+    }
+}
+
+enum class ExportFormat(
+    val extension: String,
+    val label: String,
+    val mimeType: String
+) {
+    TXT("txt", "Text (.txt)", "text/plain"),
+    MD("md", "Markdown (.md)", "text/markdown"),
+    SRT("srt", "Subtitles (.srt)", "application/x-subrip")
 }

@@ -25,20 +25,23 @@ import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
+import com.illyism.transcribe.domain.ExportFormat
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,8 +75,7 @@ fun DoneScreen(
     language: String?,
     durationSeconds: Double,
     saveLocationLabel: String,
-    onShare: () -> Unit,
-    onOpenFile: () -> Unit,
+    onDownload: (ExportFormat) -> Unit,
     onCopyText: (String) -> Unit,
     onRename: (String) -> Unit,
     onAnother: () -> Unit,
@@ -95,6 +97,7 @@ fun DoneScreen(
     var previewMode by remember { mutableStateOf(PreviewMode.Text) }
     var showRename by remember { mutableStateOf(false) }
     var showFull by remember { mutableStateOf(false) }
+    var showDownload by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -223,33 +226,12 @@ fun DoneScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // Share = Android share sheet. Open = open with another app (ACTION_VIEW).
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                PrimaryButton(
-                    text = "Share SRT",
-                    onClick = onShare,
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.Share
-                )
-                SecondaryButton(
-                    text = "Open file",
-                    onClick = onOpenFile,
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.FolderOpen
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             SecondaryButton(
-                text = "Copy text",
-                onClick = { onCopyText(plain.ifBlank { srtBody }) },
-                icon = Icons.Outlined.ContentCopy
+                text = "Download",
+                onClick = { showDownload = true },
+                icon = Icons.Outlined.Download
             )
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -298,6 +280,13 @@ fun DoneScreen(
                 )
             }
 
+            Spacer(modifier = Modifier.height(12.dp))
+            PrimaryButton(
+                text = "Copy text",
+                onClick = { onCopyText(plain.ifBlank { srtBody }) },
+                icon = Icons.Outlined.ContentCopy
+            )
+
             Spacer(modifier = Modifier.height(20.dp))
             SecondaryButton(
                 text = "Transcribe another video",
@@ -318,6 +307,16 @@ fun DoneScreen(
         )
     }
 
+    if (showDownload) {
+        DownloadFormatSheet(
+            onDismiss = { showDownload = false },
+            onSelect = { format ->
+                showDownload = false
+                onDownload(format)
+            }
+        )
+    }
+
     if (showFull) {
         FullTranscriptSheet(
             srtBody = srtBody,
@@ -326,6 +325,53 @@ fun DoneScreen(
             onDismiss = { showFull = false },
             onCopy = onCopyText
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DownloadFormatSheet(
+    onDismiss: () -> Unit,
+    onSelect: (ExportFormat) -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = scheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .padding(bottom = 24.dp)
+        ) {
+            Text(
+                "Download as",
+                style = MaterialTheme.typography.titleLarge,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+            )
+            Text(
+                "Saved to Downloads/Transcribe",
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 20.dp)
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            ExportFormat.entries.forEach { format ->
+                ListItem(
+                    headlineContent = { Text(format.label) },
+                    leadingContent = {
+                        Icon(Icons.Outlined.Download, contentDescription = null, tint = scheme.primary)
+                    },
+                    colors = ListItemDefaults.colors(containerColor = scheme.surface),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onSelect(format) }
+                )
+            }
+        }
     }
 }
 

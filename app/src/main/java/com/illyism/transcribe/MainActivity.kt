@@ -121,21 +121,7 @@ class MainActivity : ComponentActivity() {
                                 language = state.language,
                                 durationSeconds = state.durationSeconds,
                                 saveLocationLabel = viewModel.friendlySaveLocation(),
-                                onShare = {
-                                    // Share sheet — send the file to CapCut, Drive, Telegram, etc.
-                                    viewModel.shareSrt()?.let {
-                                        startActivity(Intent.createChooser(it, "Share SRT"))
-                                    }
-                                },
-                                onOpenFile = {
-                                    // Open with another app (viewer/editor), not the share sheet.
-                                    val intent = viewModel.openSrt() ?: return@DoneScreen
-                                    runCatching {
-                                        startActivity(Intent.createChooser(intent, "Open SRT with"))
-                                    }.onFailure {
-                                        viewModel.showMessage("No app found to open .srt files")
-                                    }
-                                },
+                                onDownload = viewModel::downloadExport,
                                 onCopyText = viewModel::copyText,
                                 onRename = viewModel::renameSrt,
                                 onAnother = viewModel::transcribeAnother,

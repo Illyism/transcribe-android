@@ -3,10 +3,13 @@ package com.illyism.transcribe.ui
 import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.core.content.FileProvider
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.ExistingWorkPolicy
@@ -17,15 +20,18 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import com.illyism.transcribe.TranscribeApp
 import com.illyism.transcribe.data.TranscribeSessionStore
+import com.illyism.transcribe.domain.ExportFormat
 import com.illyism.transcribe.domain.PipelineStage
 import com.illyism.transcribe.domain.SrtBuilder
 import com.illyism.transcribe.domain.UriMediaAccess
 import com.illyism.transcribe.work.TranscribeWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 data class UiState(
@@ -390,43 +396,78 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         refreshSettings()
     }
 
-    fun shareSrt(): Intent? = srtContentUri()?.let { uri ->
-        Intent(Intent.ACTION_SEND).apply {
-            type = "application/x-subrip"
-            putExtra(Intent.EXTRA_STREAM, uri)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-    }
-
-    fun openSrt(): Intent? = srtContentUri()?.let { uri ->
-        Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/x-subrip")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-    }
-
-    fun openSourceVideo(): Intent? {
-        val uri = _state.value.selected?.uri ?: return null
-        return Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "video/*")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        }
-    }
-
-    fun copyPlainText() {
-        val path = _state.value.srtPath ?: return
-        val srt = runCatching { File(path).readText() }.getOrNull()
-            ?: _state.value.preview
-            ?: return
-        copyText(SrtBuilder.plainText(srt).ifBlank { srt })
-    }
-
     fun copyText(text: String) {
         if (text.isBlank()) return
         val clipboard = getApplication<Application>()
             .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("transcript", text))
         _state.update { it.copy(snackbar = "Copied") }
+    }
+
+    fun downloadExport(format: ExportFormat) {
+        viewModelScope.launch {
+            val path = _state.value.srtPath
+            if (path == null) {
+                showMessage("Nothing to download")
+                return@launch
+            }
+            val result = withContext(Dispatchers.IO) {
+                runCatching {
+                    val srtFile = File(path)
+                    val srt = if (srtFile.exists()) srtFile.readText() else _state.value.preview.orEmpty()
+                    val base = srtFile.nameWithoutExtension.ifBlank { "transcript" }
+                    val body = when (format) {
+                        ExportFormat.SRT -> srt
+                        ExportFormat.TXT -> SrtBuilder.plainText(srt).ifBlank { srt }
+                        ExportFormat.MD -> SrtBuilder.toMarkdown(srt, base)
+                    }
+                    val fileName = "$base.${format.extension}"
+                    saveToDownloads(fileName, format.mimeType, body.toByteArray(Charsets.UTF_8))
+                    fileName
+                }
+            }
+            result.fold(
+                onSuccess = { name ->
+                    showMessage("Saved $name to Downloads/Transcribe")
+                },
+                onFailure = {
+                    showMessage(it.message ?: "Download failed")
+                }
+            )
+        }
+    }
+
+    private fun saveToDownloads(fileName: String, mimeType: String, bytes: ByteArray): Uri {
+        val context = getApplication<Application>()
+        val resolver = context.contentResolver
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/Transcribe")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw IllegalStateException("Could not create download file")
+            resolver.openOutputStream(uri)?.use { it.write(bytes) }
+                ?: throw IllegalStateException("Could not write download file")
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+            return uri
+        }
+
+        @Suppress("DEPRECATION")
+        val dir = File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+            "Transcribe"
+        )
+        if (!dir.exists() && !dir.mkdirs()) {
+            throw IllegalStateException("Could not create Downloads/Transcribe")
+        }
+        val outFile = File(dir, fileName)
+        outFile.writeBytes(bytes)
+        return Uri.fromFile(outFile)
     }
 
     fun renameSrt(newName: String) {
@@ -463,36 +504,6 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun saveEditedTranscript(srtBody: String) {
-        val path = _state.value.srtPath ?: return
-        val file = File(path)
-        runCatching {
-            file.writeText(srtBody, Charsets.UTF_8)
-            app.sessionStore.saveResult(
-                path,
-                SrtBuilder.preview(srtBody),
-                _state.value.language.orEmpty(),
-                SrtBuilder.durationSeconds(srtBody).takeIf { it > 0 }
-                    ?: _state.value.durationSeconds
-            )
-            _state.update {
-                it.copy(
-                    preview = SrtBuilder.preview(srtBody),
-                    durationSeconds = SrtBuilder.durationSeconds(srtBody)
-                        .takeIf { d -> d > 0 } ?: it.durationSeconds,
-                    snackbar = "Transcript saved"
-                )
-            }
-        }.onFailure {
-            _state.update { state -> state.copy(snackbar = "Could not save edits") }
-        }
-    }
-
-    fun readSrtBody(): String {
-        val path = _state.value.srtPath ?: return _state.value.preview.orEmpty()
-        return runCatching { File(path).readText() }.getOrDefault(_state.value.preview.orEmpty())
-    }
-
     fun friendlySaveLocation(): String {
         val path = _state.value.srtPath ?: return "App files"
         return when {
@@ -502,24 +513,11 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun transcribeAgain() = startTranscription()
-
     fun showMessage(message: String) {
         _state.update { it.copy(snackbar = message) }
     }
 
     fun consumeSnackbar() {
         _state.update { it.copy(snackbar = null) }
-    }
-
-    private fun srtContentUri(): Uri? {
-        val path = _state.value.srtPath ?: return null
-        val file = File(path)
-        if (!file.exists()) return null
-        return FileProvider.getUriForFile(
-            getApplication(),
-            "${getApplication<Application>().packageName}.fileprovider",
-            file
-        )
     }
 }
