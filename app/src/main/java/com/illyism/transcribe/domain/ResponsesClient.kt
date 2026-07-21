@@ -123,8 +123,10 @@ class ResponsesClient(
     ): SkillCompletion {
         val outputText = StringBuilder()
         val reasoningText = StringBuilder()
+        val refusalText = StringBuilder()
         var completedResponse: JSONObject? = null
         var failedMessage: String? = null
+        var incompleteReason: String? = null
 
         var line: String?
         val dataLines = mutableListOf<String>()
@@ -170,8 +172,25 @@ class ResponsesClient(
                         onOutputDelta?.invoke(outputText.toString())
                     }
                 }
+                "response.refusal.delta" -> {
+                    val delta = event.optString("delta")
+                    if (delta.isNotEmpty()) refusalText.append(delta)
+                }
+                "response.refusal.done" -> {
+                    val text = event.optString("text")
+                    if (text.isNotBlank() && refusalText.isEmpty()) {
+                        refusalText.append(text)
+                    }
+                }
                 "response.completed" -> {
-                    completedResponse = event.optJSONObject("response")
+                    val resp = event.optJSONObject("response")
+                    completedResponse = resp
+                    if (resp?.optString("status") == "incomplete") {
+                        incompleteReason = resp.optJSONObject("incomplete_details")
+                            ?.optString("reason")
+                            ?.takeIf { it.isNotBlank() }
+                            ?: "incomplete"
+                    }
                 }
                 "response.failed" -> {
                     val resp = event.optJSONObject("response")
@@ -201,17 +220,34 @@ class ResponsesClient(
         // Prefer streamed deltas; fall back to the completed response object.
         val fromCompleted = completedResponse?.let { parseResponseObject(it) }
         val text = outputText.toString().ifBlank { fromCompleted?.text.orEmpty() }
-            .ifBlank { throw IOException("Responses API: empty text output") }
+        if (text.isBlank()) {
+            val refusal = refusalText.toString().ifBlank { null }
+                ?: fromCompleted?.refusal
+            if (!refusal.isNullOrBlank()) {
+                throw IOException("The model declined: $refusal")
+            }
+            if (incompleteReason != null) {
+                throw IOException("Response was cut off ($incompleteReason)")
+            }
+            throw IOException("Responses API: empty text output")
+        }
         val reasoning = reasoningText.toString().ifBlank { null }
             ?: fromCompleted?.reasoningSummary
 
         return SkillCompletion(text = text, reasoningSummary = reasoning?.trim()?.takeIf { it.isNotBlank() })
     }
 
-    private fun parseResponseObject(json: JSONObject): SkillCompletion {
+    private data class ParsedResponse(
+        val text: String,
+        val reasoningSummary: String?,
+        val refusal: String?
+    )
+
+    private fun parseResponseObject(json: JSONObject): ParsedResponse {
         val directText = json.optString("output_text").takeIf { it.isNotBlank() }
         val textParts = mutableListOf<String>()
         val reasoningParts = mutableListOf<String>()
+        val refusalParts = mutableListOf<String>()
 
         val output = json.optJSONArray("output") ?: JSONArray()
         for (i in 0 until output.length()) {
@@ -221,9 +257,16 @@ class ResponsesClient(
                     val content = item.optJSONArray("content") ?: continue
                     for (j in 0 until content.length()) {
                         val part = content.optJSONObject(j) ?: continue
-                        if (part.optString("type") == "output_text") {
-                            val t = part.optString("text")
-                            if (t.isNotBlank()) textParts.add(t)
+                        when (part.optString("type")) {
+                            "output_text" -> {
+                                val t = part.optString("text")
+                                if (t.isNotBlank()) textParts.add(t)
+                            }
+                            "refusal" -> {
+                                val t = part.optString("refusal")
+                                    .ifBlank { part.optString("text") }
+                                if (t.isNotBlank()) refusalParts.add(t)
+                            }
                         }
                     }
                 }
@@ -240,9 +283,10 @@ class ResponsesClient(
             }
         }
 
-        return SkillCompletion(
+        return ParsedResponse(
             text = directText ?: textParts.joinToString("\n"),
-            reasoningSummary = reasoningParts.joinToString("\n\n").ifBlank { null }
+            reasoningSummary = reasoningParts.joinToString("\n\n").ifBlank { null },
+            refusal = refusalParts.joinToString("\n").ifBlank { null }
         )
     }
 
