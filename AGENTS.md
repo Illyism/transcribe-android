@@ -14,24 +14,25 @@ Kotlin + Jetpack Compose app for on-device transcription. Companion to `@illyism
 | Piece | Choice |
 |-------|--------|
 | UI | Jetpack Compose + Material 3, dark theme |
+| Navigation | Jetpack Navigation 3 (`NavDisplay` + per-tab back stacks) |
 | Background work | WorkManager + foreground service (`dataSync`) |
 | FFmpeg | `dev.ffmpegkit-maintained:ffmpeg-kit-audio` |
 | Whisper | OkHttp multipart → OpenAI `/v1/audio/transcriptions` |
 | Skills | OkHttp SSE → OpenAI `/v1/responses` (Structured Outputs + streamed reasoning summary) |
 | Package / app id | `com.illyism.transcribe` |
-| Min / target SDK | 26 / 35, JDK 17 |
+| Min / target / compile SDK | 26 / 35 / 36, JDK 17 |
 
 ## Layout
 
 ```
 app/src/main/java/com/illyism/transcribe/
-  MainActivity.kt              # Compose host + bottom nav + SAF pickers
+  MainActivity.kt              # NavDisplay host + bottom nav + SAF pickers
   TranscribeApp.kt             # Application, singletons, notification channel
   data/
     SettingsRepository.kt      # Encrypted prefs (API key, chunk, parallel, raw, skillModelTier)
-    TranscribeSessionStore.kt  # Selected file + progress/result across process death
+    TranscribeSessionStore.kt  # Active job only (selected + progress/error)
     SkillRepository.kt         # Built-ins + custom skills → skills.json
-    HistoryStore.kt            # Completed transcripts + cached skill results → history.json
+    HistoryStore.kt            # Transcripts + cached skill results (source of truth)
   domain/
     FfmpegProcessor.kt         # extract / optimize / chunk
     WhisperClient.kt           # parallel-safe HTTP client
@@ -46,7 +47,11 @@ app/src/main/java/com/illyism/transcribe/
       SkillRunner.kt           # instructions/input + schema + parse results
   work/TranscribeWorker.kt     # WorkManager entry
   ui/
-    TranscribeViewModel.kt     # Pipeline + nav + history
+    TranscribeViewModel.kt     # Active job + settings + history list (no nav)
+    nav/
+      Routes.kt                # @Serializable AppKey : NavKey (entity-ID routes)
+      NavigationState.kt       # Per-tab rememberNavBackStack holder
+      Navigator.kt             # navigate / goBack / replaceTop / clearToRoot
     skills/
       SkillsViewModel.kt       # Skill CRUD + run state
       SkillsScreen.kt / SkillEditorScreen.kt / SkillRunScreen.kt /
@@ -55,6 +60,14 @@ app/src/main/java/com/illyism/transcribe/
     screens/                   # Home, History, Selected, Processing, Done, Settings
     components/Components.kt   # PrimaryButton, LabeledDropdown, …
 ```
+
+## Navigation (Nav3)
+
+- Composition-held back stacks via `rememberNavBackStack` (one per tab: Home / History / Skills).
+- Screens are addressed by ID: `TranscriptDetail(transcriptId)`, `SkillPicker(transcriptId)`, `SkillRun(transcriptId, skillId)`, `SkillResults(transcriptId, skillId)`, `SkillEditor(skillId?)`.
+- Finished transcripts load from `HistoryStore.get(id)` — not mirrored in `UiState`.
+- On pipeline DONE, ViewModel appends to HistoryStore and emits `finishedTranscriptId`; UI replaces `Processing` with `TranscriptDetail(id)`.
+- `TranscribeSessionStore` only holds the ephemeral active job (selected video + progress/error).
 
 ## Pipeline (must match CLI intent)
 
@@ -119,11 +132,11 @@ Transcription stays `whisper-1` (separate from Skills).
 ## UI / design
 
 - Material 3 with dynamic color (Material You) on API 31+; follows system light/dark. Amber fallback on older devices.
-- Bottom nav: **Home / History / Skills** (hidden during Selected / Processing / Done / Settings / skill flows).
+- Bottom nav: **Home / History / Skills** (per-tab back stacks; bar hidden on flow screens).
 - One job per screen; no dashboard clutter
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
-- Done screen: **Export** (pick txt/md/srt → save to `Downloads/Transcribe`, then auto-open Share); **Create something** for Skills; Copy text under the preview
+- Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): **Export** (pick txt/md/srt → save to `Downloads/Transcribe`, then auto-open Share); **Create something** for Skills; Copy text under the preview
 
 ## Build & install
 

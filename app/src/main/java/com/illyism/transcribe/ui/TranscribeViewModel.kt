@@ -29,17 +29,22 @@ import com.illyism.transcribe.domain.SrtBuilder
 import com.illyism.transcribe.domain.UriMediaAccess
 import com.illyism.transcribe.work.TranscribeWorker
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+/**
+ * Active-job + settings + history list. Navigation lives in Composition (Nav3);
+ * finished transcripts are loaded by id from [com.illyism.transcribe.data.HistoryStore].
+ */
 data class UiState(
-    /** Explicit stack — last entry is the visible screen (Nav3-style). */
-    val backStack: List<AppRoute> = listOf(AppRoute.Home),
     val selected: TranscribeSessionStore.SelectedVideo? = null,
     val hasApiKey: Boolean = false,
     val apiKey: String = "",
@@ -56,34 +61,9 @@ data class UiState(
     val audioBytes: Long = 0,
     val message: String = "",
     val error: String? = null,
-    val srtPath: String? = null,
-    val preview: String? = null,
-    val language: String? = null,
-    val durationSeconds: Double = 0.0,
-    val historyId: String? = null,
     val history: List<HistoryEntry> = emptyList(),
     val snackbar: String? = null
-) {
-    val route: AppRoute get() = backStack.lastOrNull() ?: AppRoute.Home
-    val canNavigateUp: Boolean get() = backStack.size > 1
-}
-
-enum class AppRoute {
-    Home,
-    History,
-    Skills,
-    Selected,
-    Processing,
-    Done,
-    Settings,
-    SkillPicker,
-    SkillEditor,
-    SkillRun,
-    SkillResults;
-
-    val isTab: Boolean
-        get() = this == Home || this == History || this == Skills
-}
+)
 
 class TranscribeViewModel(application: Application) : AndroidViewModel(application) {
     private val app = application as TranscribeApp
@@ -92,12 +72,31 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    /** Emitted when a transcription finishes and is appended to HistoryStore. */
+    private val _finishedTranscriptId = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val finishedTranscriptId: SharedFlow<String> = _finishedTranscriptId.asSharedFlow()
+
+    /**
+     * One-shot restore hints for cold start when Nav3 has not yet restored a stack
+     * that matches the active job (e.g. first launch after process death with progress).
+     */
+    private val _restoreNav = MutableSharedFlow<RestoreNav>(extraBufferCapacity = 1)
+    val restoreNav: SharedFlow<RestoreNav> = _restoreNav.asSharedFlow()
+
+    sealed interface RestoreNav {
+        data object Selected : RestoreNav
+        data object Processing : RestoreNav
+        data class Transcript(val id: String) : RestoreNav
+    }
+
     init {
         refreshSettings()
         refreshHistory()
         restoreSession()
         observeWork()
     }
+
+    fun transcript(id: String): HistoryEntry? = app.historyStore.get(id)
 
     fun refreshSettings() {
         _state.update {
@@ -117,118 +116,20 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         _state.update { it.copy(history = app.historyStore.list()) }
     }
 
-    // region Back stack (push / pop — mirrors Navigation 3 back-stack mental model)
-
-    private fun UiState.withStack(stack: List<AppRoute>): UiState =
-        copy(backStack = stack.ifEmpty { listOf(AppRoute.Home) })
-
-    private fun currentTabRoot(): AppRoute =
-        _state.value.backStack.firstOrNull { it.isTab } ?: AppRoute.Home
-
-    /**
-     * Pop one destination. Returns false when already at a root tab (system may finish).
-     * Leaving Processing cancels the in-flight job.
-     */
-    fun navigateUp(): Boolean {
-        val stack = _state.value.backStack
-        if (stack.size <= 1) return false
-        if (stack.last() == AppRoute.Processing) {
-            workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
-            app.sessionStore.clearProgressAndError()
-            _state.update {
-                it.withStack(stack.dropLast(1)).copy(
-                    stage = PipelineStage.IDLE,
-                    percent = 0,
-                    message = "",
-                    error = null
-                )
-            }
-            return true
-        }
-        _state.update { it.withStack(stack.dropLast(1)) }
-        return true
-    }
-
-    private fun push(route: AppRoute) {
-        _state.update { state ->
-            val stack = state.backStack.toMutableList()
-            if (stack.lastOrNull() != route) stack.add(route)
-            state.withStack(stack)
-        }
-    }
-
-    private fun replaceTop(route: AppRoute) {
-        _state.update { state ->
-            val stack = state.backStack.toMutableList()
-            if (stack.isEmpty()) stack.add(route) else stack[stack.lastIndex] = route
-            state.withStack(stack)
-        }
-    }
-
-    private fun resetTo(route: AppRoute) {
-        _state.update { it.withStack(listOf(route)) }
-    }
-
-    /** Keep tab root, then a single flow screen (Selected / Processing / Done). */
-    private fun showFlow(route: AppRoute) {
-        val root = currentTabRoot().takeIf { it.isTab } ?: AppRoute.Home
-        _state.update { it.withStack(listOf(root, route)) }
-    }
-
-    /** Pop until [route] is on top (inclusive keeps it). */
-    private fun popTo(route: AppRoute, inclusive: Boolean = false): Boolean {
-        val stack = _state.value.backStack
-        val idx = stack.indexOfLast { it == route }
-        if (idx < 0) return false
-        val kept = if (inclusive) stack.take(idx) else stack.take(idx + 1)
-        _state.update { it.withStack(kept) }
-        return true
-    }
-
-    // endregion
-
     private fun restoreSession() {
         val selected = app.sessionStore.selectedVideo()
-        val srt = app.sessionStore.resultSrtPath()
-        val preview = app.sessionStore.resultPreview()
         val error = app.sessionStore.error()
         val progress = app.sessionStore.progress()
 
         when {
-            srt != null -> {
-                val srtBody = runCatching { File(srt).readText() }.getOrDefault(preview.orEmpty())
-                val language = app.sessionStore.resultLanguage()
-                val duration = app.sessionStore.resultDurationSeconds()
-                    .takeIf { d -> d > 0 }
-                    ?: SrtBuilder.durationSeconds(srtBody)
-                val entry = appendToHistory(
-                    filename = selected?.displayName ?: File(srt).name,
-                    srtPath = srt,
-                    preview = preview ?: SrtBuilder.preview(srtBody),
-                    language = language.orEmpty(),
-                    durationSeconds = duration
-                )
-                _state.update {
-                    it.withStack(listOf(AppRoute.Home, AppRoute.Done)).copy(
-                        selected = selected,
-                        srtPath = srt,
-                        preview = preview ?: SrtBuilder.preview(srtBody),
-                        language = language,
-                        durationSeconds = duration,
-                        historyId = entry.id,
-                        stage = PipelineStage.DONE,
-                        percent = 100
-                    )
-                }
-                refreshHistory()
-            }
             progress != null &&
                 progress.stage !in listOf(PipelineStage.IDLE.name, PipelineStage.DONE.name) &&
                 selected != null -> {
                 _state.update {
-                    it.withStack(listOf(AppRoute.Home, AppRoute.Processing)).copy(
+                    it.copy(
                         selected = selected,
-                        stage = runCatching { PipelineStage.valueOf(progress.stage) }.getOrDefault(PipelineStage.EXTRACTING),
+                        stage = runCatching { PipelineStage.valueOf(progress.stage) }
+                            .getOrDefault(PipelineStage.EXTRACTING),
                         percent = progress.overallPercent,
                         chunksDone = progress.chunksDone,
                         chunksTotal = progress.chunksTotal,
@@ -238,15 +139,14 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                         error = error
                     )
                 }
+                _restoreNav.tryEmit(RestoreNav.Processing)
             }
             progress != null && selected == null -> {
-                // Orphaned progress / error with no video — clear and start fresh.
                 app.sessionStore.clear()
             }
             selected != null -> {
-                _state.update {
-                    it.withStack(listOf(AppRoute.Home, AppRoute.Selected)).copy(selected = selected)
-                }
+                _state.update { it.copy(selected = selected) }
+                _restoreNav.tryEmit(RestoreNav.Selected)
             }
         }
     }
@@ -269,35 +169,47 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
                     when (info.state) {
                         WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
-                            val percent = info.progress.getInt(TranscribeWorker.KEY_PERCENT, _state.value.percent)
+                            val percent = info.progress.getInt(
+                                TranscribeWorker.KEY_PERCENT,
+                                _state.value.percent
+                            )
                             val stageName = info.progress.getString(TranscribeWorker.KEY_STAGE)
                             val stage = stageName?.let {
                                 runCatching { PipelineStage.valueOf(it) }.getOrNull()
                             } ?: _state.value.stage
                             _state.update {
-                                val root = it.backStack.firstOrNull { r -> r.isTab } ?: AppRoute.Home
-                                it.withStack(listOf(root, AppRoute.Processing)).copy(
+                                it.copy(
                                     stage = stage,
                                     percent = percent,
-                                    chunksDone = info.progress.getInt(TranscribeWorker.KEY_CHUNKS_DONE, it.chunksDone),
-                                    chunksTotal = info.progress.getInt(TranscribeWorker.KEY_CHUNKS_TOTAL, it.chunksTotal),
-                                    videoBytes = info.progress.getLong(TranscribeWorker.KEY_VIDEO_BYTES, it.videoBytes),
-                                    audioBytes = info.progress.getLong(TranscribeWorker.KEY_AUDIO_BYTES, it.audioBytes),
-                                    message = info.progress.getString(TranscribeWorker.KEY_MESSAGE) ?: it.message,
+                                    chunksDone = info.progress.getInt(
+                                        TranscribeWorker.KEY_CHUNKS_DONE,
+                                        it.chunksDone
+                                    ),
+                                    chunksTotal = info.progress.getInt(
+                                        TranscribeWorker.KEY_CHUNKS_TOTAL,
+                                        it.chunksTotal
+                                    ),
+                                    videoBytes = info.progress.getLong(
+                                        TranscribeWorker.KEY_VIDEO_BYTES,
+                                        it.videoBytes
+                                    ),
+                                    audioBytes = info.progress.getLong(
+                                        TranscribeWorker.KEY_AUDIO_BYTES,
+                                        it.audioBytes
+                                    ),
+                                    message = info.progress.getString(TranscribeWorker.KEY_MESSAGE)
+                                        ?: it.message,
                                     error = null
                                 )
                             }
                         }
                         WorkInfo.State.SUCCEEDED -> {
                             val srt = info.outputData.getString(TranscribeWorker.KEY_SRT)
-                                ?: app.sessionStore.resultSrtPath()
                             val preview = info.outputData.getString(TranscribeWorker.KEY_PREVIEW)
-                                ?: app.sessionStore.resultPreview()
                             val language = info.outputData.getString(TranscribeWorker.KEY_LANGUAGE)
-                                ?: app.sessionStore.resultLanguage()
                             val duration = info.outputData.getFloat(
                                 TranscribeWorker.KEY_DURATION_SEC,
-                                app.sessionStore.resultDurationSeconds().toFloat()
+                                0f
                             ).toDouble()
                             if (srt != null) {
                                 val filename = _state.value.selected?.displayName
@@ -311,36 +223,27 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                     durationSeconds = duration
                                 )
                                 _state.update {
-                                    val root = it.backStack.firstOrNull { r -> r.isTab } ?: AppRoute.Home
-                                    it.withStack(listOf(root, AppRoute.Done)).copy(
+                                    it.copy(
                                         stage = PipelineStage.DONE,
                                         percent = 100,
-                                        srtPath = srt,
-                                        preview = preview,
-                                        language = language,
-                                        durationSeconds = duration,
-                                        historyId = entry.id,
                                         error = null
                                     )
                                 }
                                 refreshHistory()
+                                _finishedTranscriptId.emit(entry.id)
                             }
                         }
                         WorkInfo.State.FAILED -> {
                             val selected = _state.value.selected ?: app.sessionStore.selectedVideo()
                             if (selected == null) {
-                                // Stale failed WorkManager entry with nothing to retry —
-                                // don't pin the UI on a dead error screen.
                                 app.sessionStore.clear()
                                 _state.update {
-                                    it.withStack(listOf(AppRoute.Home)).copy(
+                                    it.copy(
                                         selected = null,
                                         stage = PipelineStage.IDLE,
                                         percent = 0,
                                         error = null,
-                                        message = "",
-                                        srtPath = null,
-                                        preview = null
+                                        message = ""
                                     )
                                 }
                                 return@collect
@@ -349,8 +252,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                 ?: app.sessionStore.error()
                                 ?: "Transcription failed"
                             _state.update {
-                                val root = it.backStack.firstOrNull { r -> r.isTab } ?: AppRoute.Home
-                                it.withStack(listOf(root, AppRoute.Processing)).copy(
+                                it.copy(
                                     selected = selected,
                                     stage = PipelineStage.FAILED,
                                     error = err,
@@ -376,13 +278,11 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             val meta = UriMediaAccess.readMeta(ctx, uri)
             app.sessionStore.saveSelected(uri, meta.displayName, meta.sizeBytes, meta.durationMs)
             _state.update {
-                it.withStack(listOf(AppRoute.Home, AppRoute.Selected)).copy(
+                it.copy(
                     selected = TranscribeSessionStore.SelectedVideo(
                         uri, meta.displayName, meta.sizeBytes, meta.durationMs
                     ),
                     error = null,
-                    srtPath = null,
-                    preview = null,
                     stage = PipelineStage.IDLE,
                     percent = 0
                 )
@@ -390,23 +290,22 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun startTranscription() {
+    fun startTranscription(): Boolean {
         val selected = _state.value.selected ?: app.sessionStore.selectedVideo()
         if (selected == null) {
             _state.update {
-                it.withStack(listOf(AppRoute.Home)).copy(
+                it.copy(
                     stage = PipelineStage.IDLE,
                     error = null,
                     snackbar = "Choose a video to transcribe"
                 )
             }
-            return
+            return false
         }
         if (!app.settings.hasApiKey()) {
             _state.update { it.copy(snackbar = "Add an API key first") }
-            return
+            return false
         }
-        // Drop stale failed progress so a restart doesn't restore the old error screen.
         app.sessionStore.clearProgressAndError()
         app.sessionStore.saveSelected(
             selected.uri,
@@ -432,8 +331,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         )
 
         _state.update {
-            val root = it.backStack.firstOrNull { r -> r.isTab } ?: AppRoute.Home
-            it.withStack(listOf(root, AppRoute.Processing)).copy(
+            it.copy(
                 selected = selected,
                 stage = PipelineStage.EXTRACTING,
                 percent = 1,
@@ -445,37 +343,20 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                 chunksTotal = 0
             )
         }
+        return true
     }
 
-    fun retryTranscription() = startTranscription()
+    fun retryTranscription(): Boolean = startTranscription()
 
-    fun openSettings() {
-        if (_state.value.route != AppRoute.Settings) push(AppRoute.Settings)
-    }
-
-    fun navigateTab(route: AppRoute) {
-        if (!route.isTab) return
-        if (route == AppRoute.History) refreshHistory()
-        resetTo(route)
-    }
-
-    fun openHistoryEntry(id: String) {
-        val entry = app.historyStore.get(id) ?: return
-        if (!File(entry.srtPath).exists()) {
-            _state.update { it.copy(snackbar = "Transcript file missing") }
-            return
-        }
-        val body = runCatching { File(entry.srtPath).readText() }.getOrDefault(entry.preview)
+    /** Cancel in-flight work when leaving the Processing screen. */
+    fun cancelActiveJob() {
+        workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
+        app.sessionStore.clearProgressAndError()
         _state.update {
-            it.withStack(listOf(AppRoute.History, AppRoute.Done)).copy(
-                historyId = entry.id,
-                srtPath = entry.srtPath,
-                preview = entry.preview.ifBlank { SrtBuilder.preview(body) },
-                language = entry.language,
-                durationSeconds = entry.durationSeconds.takeIf { d -> d > 0 }
-                    ?: SrtBuilder.durationSeconds(body),
-                stage = PipelineStage.DONE,
-                percent = 100,
+            it.copy(
+                stage = PipelineStage.IDLE,
+                percent = 0,
+                message = "",
                 error = null
             )
         }
@@ -485,57 +366,6 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         app.historyStore.delete(id)
         refreshHistory()
         _state.update { it.copy(snackbar = "Removed from history") }
-    }
-
-    fun openCreateSomething() {
-        val srt = _state.value.srtPath
-        if (srt.isNullOrBlank()) {
-            _state.update { it.copy(snackbar = "No transcript to use") }
-            return
-        }
-        when (_state.value.route) {
-            AppRoute.SkillPicker -> Unit
-            AppRoute.Done -> push(AppRoute.SkillPicker)
-            else -> {
-                // Ensure Done is under the picker so Back returns to the transcript.
-                if (!popTo(AppRoute.Done)) showFlow(AppRoute.Done)
-                push(AppRoute.SkillPicker)
-            }
-        }
-    }
-
-    fun openSkillRun() {
-        if (_state.value.route != AppRoute.SkillRun) push(AppRoute.SkillRun)
-    }
-
-    fun openSkillEditor() {
-        if (_state.value.route == AppRoute.SkillEditor) return
-        if (_state.value.route != AppRoute.Skills && !popTo(AppRoute.Skills)) {
-            resetTo(AppRoute.Skills)
-        }
-        push(AppRoute.SkillEditor)
-    }
-
-    fun openSkillResults() {
-        if (_state.value.route != AppRoute.SkillResults) push(AppRoute.SkillResults)
-    }
-
-    /** Toolbar / system back — one pop. */
-    fun backFromSkillFlow() {
-        navigateUp()
-    }
-
-    fun backFromDone() {
-        navigateUp()
-    }
-
-    /** Leave results and return to the transcript detail (or Skills if none). */
-    fun finishSkillResults() {
-        when {
-            popTo(AppRoute.Done) -> Unit
-            _state.value.srtPath != null -> showFlow(AppRoute.Done)
-            else -> resetTo(AppRoute.Skills)
-        }
     }
 
     private fun appendToHistory(
@@ -555,27 +385,19 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         )
     }
 
-    fun backFromSettings() {
-        refreshSettings()
-        if (!navigateUp()) resetTo(AppRoute.Home)
-    }
-
     fun chooseDifferent() {
         workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
         workManager.pruneWork()
         app.sessionStore.clear()
         _state.update {
-            it.withStack(listOf(AppRoute.Home)).copy(
+            it.copy(
                 selected = null,
                 stage = PipelineStage.IDLE,
                 percent = 0,
                 message = "",
                 chunksDone = 0,
                 chunksTotal = 0,
-                srtPath = null,
-                preview = null,
-                error = null,
-                historyId = null
+                error = null
             )
         }
     }
@@ -613,10 +435,6 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         refreshSettings()
     }
 
-    fun skillModelId(): String = app.settings.skillModelId()
-
-    fun skillReasoningEffort(): String = app.settings.skillModelTier.reasoningEffort
-
     fun copyText(text: String) {
         if (text.isBlank()) return
         val clipboard = getApplication<Application>()
@@ -629,17 +447,18 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
      * Saves the transcript in [format] to Downloads/Transcribe, then builds a share
      * Intent from a FileProvider cache copy so the system share sheet opens next.
      */
-    fun exportAndShare(format: ExportFormat, onReady: (Intent) -> Unit) {
+    fun exportAndShare(transcriptId: String, format: ExportFormat, onReady: (Intent) -> Unit) {
         viewModelScope.launch {
-            val path = _state.value.srtPath
-            if (path == null) {
+            val entry = transcript(transcriptId)
+            if (entry == null) {
                 showMessage("Nothing to export")
                 return@launch
             }
+            val path = entry.srtPath
             val result = withContext(Dispatchers.IO) {
                 runCatching {
                     val srtFile = File(path)
-                    val srt = if (srtFile.exists()) srtFile.readText() else _state.value.preview.orEmpty()
+                    val srt = if (srtFile.exists()) srtFile.readText() else entry.preview
                     val base = srtFile.nameWithoutExtension.ifBlank { "transcript" }
                     val body = when (format) {
                         ExportFormat.SRT -> srt
@@ -714,9 +533,9 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         return Uri.fromFile(outFile)
     }
 
-    fun renameSrt(newName: String) {
-        val path = _state.value.srtPath ?: return
-        val file = File(path)
+    fun renameSrt(transcriptId: String, newName: String) {
+        val entry = transcript(transcriptId) ?: return
+        val file = File(entry.srtPath)
         if (!file.exists()) {
             _state.update { it.copy(snackbar = "File not found") }
             return
@@ -736,35 +555,21 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             _state.update { it.copy(snackbar = "Could not rename file") }
             return
         }
-        val preview = _state.value.preview.orEmpty()
-        app.sessionStore.saveResult(
-            target.absolutePath,
-            preview,
-            _state.value.language.orEmpty(),
-            _state.value.durationSeconds
-        )
-        val historyId = _state.value.historyId
-        if (historyId != null) {
-            app.historyStore.update(historyId) { entry ->
-                entry.copy(
-                    filename = target.nameWithoutExtension,
-                    srtPath = target.absolutePath,
-                    preview = preview
-                )
-            }
-            refreshHistory()
+        app.historyStore.update(transcriptId) { e ->
+            e.copy(
+                filename = target.nameWithoutExtension,
+                srtPath = target.absolutePath
+            )
         }
-        _state.update {
-            it.copy(srtPath = target.absolutePath, snackbar = "Renamed")
-        }
+        refreshHistory()
+        _state.update { it.copy(snackbar = "Renamed") }
     }
 
-    fun friendlySaveLocation(): String {
-        val path = _state.value.srtPath ?: return "App files"
+    fun friendlySaveLocation(srtPath: String): String {
         return when {
-            path.contains("/files/transcripts") -> "App files / transcripts"
-            path.contains("/Download") || path.contains("/Downloads") -> "Downloads/Transcribe"
-            else -> File(path).parentFile?.name ?: "App files"
+            srtPath.contains("/files/transcripts") -> "App files / transcripts"
+            srtPath.contains("/Download") || srtPath.contains("/Downloads") -> "Downloads/Transcribe"
+            else -> File(srtPath).parentFile?.name ?: "App files"
         }
     }
 

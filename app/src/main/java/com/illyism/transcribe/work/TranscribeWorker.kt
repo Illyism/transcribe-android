@@ -70,12 +70,8 @@ class TranscribeWorker(
                 setForegroundAsync(createForegroundInfo(progress.message, progress.overallPercent))
             }
 
-            app.sessionStore.saveResult(
-                result.srtPath,
-                result.preview,
-                result.language,
-                result.durationSeconds
-            )
+            // Clear in-flight progress; finished transcripts live in HistoryStore.
+            app.sessionStore.clearProgressAndError()
             Result.success(
                 workDataOf(
                     KEY_SRT to result.srtPath,

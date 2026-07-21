@@ -5,8 +5,9 @@ import android.net.Uri
 import org.json.JSONObject
 
 /**
- * Lightweight persistence so Processing/Done screens survive process death
- * while WorkManager runs the job.
+ * Ephemeral persistence for the active transcription job only
+ * (selected video + in-flight progress/error). Finished transcripts
+ * live in [HistoryStore].
  */
 class TranscribeSessionStore(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("transcribe_session", Context.MODE_PRIVATE)
@@ -22,23 +23,6 @@ class TranscribeSessionStore(context: Context) {
             .putString(KEY_NAME, displayName)
             .putLong(KEY_SIZE, sizeBytes)
             .putLong(KEY_DURATION, durationMs)
-            .remove(KEY_RESULT_SRT)
-            .remove(KEY_RESULT_PREVIEW)
-            .remove(KEY_ERROR)
-            .apply()
-    }
-
-    fun saveResult(
-        srtPath: String,
-        preview: String,
-        language: String = "",
-        durationSeconds: Double = 0.0
-    ) {
-        prefs.edit()
-            .putString(KEY_RESULT_SRT, srtPath)
-            .putString(KEY_RESULT_PREVIEW, preview)
-            .putString(KEY_LANGUAGE, language)
-            .putFloat(KEY_DURATION_SEC, durationSeconds.toFloat())
             .remove(KEY_ERROR)
             .apply()
     }
@@ -55,8 +39,6 @@ class TranscribeSessionStore(context: Context) {
         prefs.edit()
             .remove(KEY_PROGRESS)
             .remove(KEY_ERROR)
-            .remove(KEY_RESULT_SRT)
-            .remove(KEY_RESULT_PREVIEW)
             .apply()
     }
 
@@ -70,10 +52,6 @@ class TranscribeSessionStore(context: Context) {
         )
     }
 
-    fun resultSrtPath(): String? = prefs.getString(KEY_RESULT_SRT, null)
-    fun resultPreview(): String? = prefs.getString(KEY_RESULT_PREVIEW, null)
-    fun resultLanguage(): String? = prefs.getString(KEY_LANGUAGE, null)?.takeIf { it.isNotBlank() }
-    fun resultDurationSeconds(): Double = prefs.getFloat(KEY_DURATION_SEC, 0f).toDouble()
     fun error(): String? = prefs.getString(KEY_ERROR, null)
 
     fun saveProgressJson(json: String) {
@@ -120,10 +98,6 @@ class TranscribeSessionStore(context: Context) {
         private const val KEY_NAME = "name"
         private const val KEY_SIZE = "size"
         private const val KEY_DURATION = "duration"
-        private const val KEY_RESULT_SRT = "srt"
-        private const val KEY_RESULT_PREVIEW = "preview"
-        private const val KEY_LANGUAGE = "language"
-        private const val KEY_DURATION_SEC = "duration_sec"
         private const val KEY_ERROR = "error"
         private const val KEY_PROGRESS = "progress"
     }
