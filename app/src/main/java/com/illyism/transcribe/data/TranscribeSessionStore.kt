@@ -44,6 +44,15 @@ class TranscribeSessionStore(context: Context) {
         prefs.edit().clear().apply()
     }
 
+    fun clearProgressAndError() {
+        prefs.edit()
+            .remove(KEY_PROGRESS)
+            .remove(KEY_ERROR)
+            .remove(KEY_RESULT_SRT)
+            .remove(KEY_RESULT_PREVIEW)
+            .apply()
+    }
+
     fun selectedVideo(): SelectedVideo? {
         val uri = prefs.getString(KEY_URI, null) ?: return null
         return SelectedVideo(

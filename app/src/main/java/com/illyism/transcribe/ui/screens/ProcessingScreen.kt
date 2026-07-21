@@ -17,7 +17,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import com.illyism.transcribe.domain.PipelineStage
 import com.illyism.transcribe.ui.components.InfoBanner
+import com.illyism.transcribe.ui.components.PrimaryButton
 import com.illyism.transcribe.ui.components.ProgressBar
+import com.illyism.transcribe.ui.components.SecondaryButton
 import com.illyism.transcribe.ui.components.StepRow
 import com.illyism.transcribe.ui.components.formatBytes
 import com.illyism.transcribe.ui.theme.Amber
@@ -34,8 +36,14 @@ fun ProcessingScreen(
     videoBytes: Long,
     audioBytes: Long,
     message: String,
-    error: String?
+    error: String?,
+    onRetry: (() -> Unit)? = null,
+    onChooseDifferent: (() -> Unit)? = null
 ) {
+    val failed = stage == PipelineStage.FAILED || error != null
+    // FAILED is last in the enum — never use its ordinal to mark earlier steps done.
+    val progressStage = if (stage == PipelineStage.FAILED) PipelineStage.EXTRACTING else stage
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -43,7 +51,10 @@ fun ProcessingScreen(
             .verticalScroll(rememberScrollState())
             .padding(24.dp)
     ) {
-        Text("Working…", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            if (failed) "Failed" else "Working…",
+            style = MaterialTheme.typography.headlineMedium
+        )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             if (error != null) error else message.ifBlank { "Preparing…" },
@@ -52,12 +63,13 @@ fun ProcessingScreen(
         )
         Spacer(modifier = Modifier.height(24.dp))
 
-        val extractDone = stage.ordinal > PipelineStage.EXTRACTING.ordinal ||
-            stage == PipelineStage.DONE
-        val optimizeDone = stage.ordinal > PipelineStage.OPTIMIZING.ordinal ||
-            stage == PipelineStage.DONE
-        val transcribingActive = stage == PipelineStage.TRANSCRIBING || stage == PipelineStage.CHUNKING
-        val transcribeDone = stage == PipelineStage.SAVING || stage == PipelineStage.DONE
+        val extractDone = progressStage.ordinal > PipelineStage.EXTRACTING.ordinal ||
+            progressStage == PipelineStage.DONE
+        val optimizeDone = progressStage.ordinal > PipelineStage.OPTIMIZING.ordinal ||
+            progressStage == PipelineStage.DONE
+        val transcribingActive = progressStage == PipelineStage.TRANSCRIBING ||
+            progressStage == PipelineStage.CHUNKING
+        val transcribeDone = progressStage == PipelineStage.SAVING || progressStage == PipelineStage.DONE
 
         Column(
             modifier = Modifier
@@ -67,20 +79,26 @@ fun ProcessingScreen(
         ) {
             StepRow(
                 title = "Extracting audio",
-                subtitle = if (extractDone) "Completed" else "In progress",
-                done = extractDone && stage != PipelineStage.EXTRACTING,
-                active = stage == PipelineStage.EXTRACTING
+                subtitle = when {
+                    failed && !extractDone -> "Failed"
+                    extractDone -> "Completed"
+                    else -> "In progress"
+                },
+                done = extractDone && progressStage != PipelineStage.EXTRACTING,
+                active = !failed && progressStage == PipelineStage.EXTRACTING
             )
             Spacer(modifier = Modifier.height(16.dp))
             StepRow(
                 title = "Optimizing",
                 subtitle = when {
-                    stage.ordinal < PipelineStage.OPTIMIZING.ordinal -> "Waiting"
-                    optimizeDone && stage != PipelineStage.OPTIMIZING -> "Completed"
+                    failed && progressStage.ordinal < PipelineStage.OPTIMIZING.ordinal -> "Waiting"
+                    failed && progressStage == PipelineStage.OPTIMIZING -> "Failed"
+                    progressStage.ordinal < PipelineStage.OPTIMIZING.ordinal -> "Waiting"
+                    optimizeDone && progressStage != PipelineStage.OPTIMIZING -> "Completed"
                     else -> "In progress"
                 },
-                done = optimizeDone && stage != PipelineStage.OPTIMIZING,
-                active = stage == PipelineStage.OPTIMIZING
+                done = optimizeDone && progressStage != PipelineStage.OPTIMIZING,
+                active = !failed && progressStage == PipelineStage.OPTIMIZING
             )
             Spacer(modifier = Modifier.height(16.dp))
             val chunkLabel = if (chunksTotal > 0) {
@@ -91,13 +109,15 @@ fun ProcessingScreen(
             StepRow(
                 title = chunkLabel,
                 subtitle = when {
-                    stage == PipelineStage.FAILED -> "Failed"
+                    failed && (transcribingActive || progressStage.ordinal >= PipelineStage.CHUNKING.ordinal) ->
+                        "Failed"
+                    failed -> "Waiting"
                     transcribeDone -> "Completed"
                     transcribingActive -> "In progress"
                     else -> "Waiting"
                 },
                 done = transcribeDone,
-                active = transcribingActive
+                active = !failed && transcribingActive
             )
         }
 
@@ -112,13 +132,23 @@ fun ProcessingScreen(
         }
 
         Spacer(modifier = Modifier.height(24.dp))
-        Text("Overall progress", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(10.dp))
-        ProgressBar(percent = percent)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            "You can leave the app. We’ll keep working in the background.",
-            style = MaterialTheme.typography.bodyMedium
-        )
+        if (failed) {
+            if (onRetry != null) {
+                PrimaryButton("Retry", onClick = onRetry)
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+            if (onChooseDifferent != null) {
+                SecondaryButton("Choose different video", onClick = onChooseDifferent)
+            }
+        } else {
+            Text("Overall progress", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(10.dp))
+            ProgressBar(percent = percent)
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                "You can leave the app. We’ll keep working in the background.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
     }
 }

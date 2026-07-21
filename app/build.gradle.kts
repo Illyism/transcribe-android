@@ -74,8 +74,9 @@ dependencies {
 
     // Community-maintained FFmpegKit (audio variant keeps APK smaller)
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
-    // Required at runtime — ffmpeg-kit references this but does not bundle it
-    implementation("com.arthenica:smart-exception-java9:0.2.1")
+    // Required at runtime — ffmpeg-kit looks for com.arthenica.smartexception.java.Exceptions
+    // (java9 artifact uses a different package and will NOT satisfy the lookup)
+    implementation("com.arthenica:smart-exception-java:0.2.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

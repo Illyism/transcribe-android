@@ -109,7 +109,9 @@ class MainActivity : ComponentActivity() {
                                 videoBytes = state.videoBytes,
                                 audioBytes = state.audioBytes,
                                 message = state.message,
-                                error = state.error
+                                error = state.error,
+                                onRetry = viewModel::retryTranscription,
+                                onChooseDifferent = viewModel::chooseDifferent
                             )
 
                             AppRoute.Done -> DoneScreen(

@@ -99,7 +99,9 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 }
             }
-            progress != null && progress.stage !in listOf(PipelineStage.IDLE.name, PipelineStage.DONE.name) -> {
+            progress != null &&
+                progress.stage !in listOf(PipelineStage.IDLE.name, PipelineStage.DONE.name) &&
+                selected != null -> {
                 _state.update {
                     it.copy(
                         route = AppRoute.Processing,
@@ -115,6 +117,10 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                     )
                 }
             }
+            progress != null && selected == null -> {
+                // Orphaned progress / error with no video — clear and start fresh.
+                app.sessionStore.clear()
+            }
             selected != null -> {
                 _state.update {
                     it.copy(route = AppRoute.Selected, selected = selected)
@@ -127,9 +133,20 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         viewModelScope.launch {
             workManager.getWorkInfosForUniqueWorkFlow(TranscribeWorker.UNIQUE_WORK)
                 .collect { infos ->
-                    val info = infos.firstOrNull() ?: return@collect
+                    // Prefer active work — REPLACE can leave a stale FAILED entry that would
+                    // immediately overwrite a Retry with the previous error.
+                    val info = infos.firstOrNull {
+                        it.state == WorkInfo.State.RUNNING ||
+                            it.state == WorkInfo.State.ENQUEUED ||
+                            it.state == WorkInfo.State.BLOCKED
+                    } ?: infos.firstOrNull {
+                        it.state == WorkInfo.State.SUCCEEDED
+                    } ?: infos.firstOrNull {
+                        it.state == WorkInfo.State.FAILED
+                    } ?: return@collect
+
                     when (info.state) {
-                        WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED -> {
+                        WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
                             val percent = info.progress.getInt(TranscribeWorker.KEY_PERCENT, _state.value.percent)
                             val stageName = info.progress.getString(TranscribeWorker.KEY_STAGE)
                             val stage = stageName?.let {
@@ -168,12 +185,32 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                             }
                         }
                         WorkInfo.State.FAILED -> {
+                            val selected = _state.value.selected ?: app.sessionStore.selectedVideo()
+                            if (selected == null) {
+                                // Stale failed WorkManager entry with nothing to retry —
+                                // don't pin the UI on a dead error screen.
+                                app.sessionStore.clear()
+                                _state.update {
+                                    it.copy(
+                                        route = AppRoute.Home,
+                                        selected = null,
+                                        stage = PipelineStage.IDLE,
+                                        percent = 0,
+                                        error = null,
+                                        message = "",
+                                        srtPath = null,
+                                        preview = null
+                                    )
+                                }
+                                return@collect
+                            }
                             val err = info.outputData.getString(TranscribeWorker.KEY_ERROR)
                                 ?: app.sessionStore.error()
                                 ?: "Transcription failed"
                             _state.update {
                                 it.copy(
                                     route = AppRoute.Processing,
+                                    selected = selected,
                                     stage = PipelineStage.FAILED,
                                     error = err,
                                     message = err
@@ -214,11 +251,30 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun startTranscription() {
-        val selected = _state.value.selected ?: return
+        val selected = _state.value.selected ?: app.sessionStore.selectedVideo()
+        if (selected == null) {
+            _state.update {
+                it.copy(
+                    route = AppRoute.Home,
+                    stage = PipelineStage.IDLE,
+                    error = null,
+                    snackbar = "Choose a video to transcribe"
+                )
+            }
+            return
+        }
         if (!app.settings.hasApiKey()) {
             _state.update { it.copy(snackbar = "Add an API key first") }
             return
         }
+        // Drop stale failed progress so a restart doesn't restore the old error screen.
+        app.sessionStore.clearProgressAndError()
+        app.sessionStore.saveSelected(
+            selected.uri,
+            selected.displayName,
+            selected.sizeBytes,
+            selected.durationMs
+        )
         val request = OneTimeWorkRequestBuilder<TranscribeWorker>()
             .setInputData(
                 workDataOf(
@@ -239,6 +295,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         _state.update {
             it.copy(
                 route = AppRoute.Processing,
+                selected = selected,
                 stage = PipelineStage.EXTRACTING,
                 percent = 1,
                 message = "Starting…",
@@ -250,6 +307,8 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             )
         }
     }
+
+    fun retryTranscription() = startTranscription()
 
     fun openSettings() = _state.update { it.copy(route = AppRoute.Settings) }
 
@@ -269,6 +328,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
     fun chooseDifferent() {
         workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
+        workManager.pruneWork()
         app.sessionStore.clear()
         _state.update {
             it.copy(
@@ -276,6 +336,9 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                 selected = null,
                 stage = PipelineStage.IDLE,
                 percent = 0,
+                message = "",
+                chunksDone = 0,
+                chunksTotal = 0,
                 srtPath = null,
                 preview = null,
                 error = null
