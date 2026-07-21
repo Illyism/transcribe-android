@@ -17,10 +17,11 @@ class FfmpegProcessor {
 
     fun extractAudio(inputPath: String, outputFile: File) {
         outputFile.parentFile?.mkdirs()
+        // FFmpeg 8 removed runtime `-ac N`; force mono via aformat instead.
         val cmd = listOf(
             "-i", quote(inputPath),
             "-vn",
-            "-ac", "1",
+            "-af", "aformat=channel_layouts=mono",
             "-ar", "16000",
             "-acodec", "libmp3lame",
             "-q:a", "2",
@@ -34,8 +35,7 @@ class FfmpegProcessor {
         outputFile.parentFile?.mkdirs()
         val cmd = listOf(
             "-i", quote(inputFile.absolutePath),
-            "-filter:a", "atempo=$speedFactor",
-            "-ac", "1",
+            "-filter:a", "atempo=$speedFactor,aformat=channel_layouts=mono",
             "-ar", "16000",
             "-acodec", "libmp3lame",
             "-q:a", "2",
@@ -50,9 +50,9 @@ class FfmpegProcessor {
         val safeBitrate = bitrateKbps.coerceIn(24, 64)
         val cmd = listOf(
             "-i", quote(inputFile.absolutePath),
+            "-af", "aformat=channel_layouts=mono",
             "-acodec", "libopus",
             "-b:a", "${safeBitrate}k",
-            "-ac", "1",
             "-f", "ogg",
             "-y",
             quote(outputFile.absolutePath)

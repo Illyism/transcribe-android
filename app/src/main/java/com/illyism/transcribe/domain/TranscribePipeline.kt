@@ -33,7 +33,7 @@ class TranscribePipeline(
         workDir.mkdirs()
 
         val temps = mutableListOf<File>()
-        val (pfd, inputPath) = UriMediaAccess.openFdPath(context, videoUri)
+        val inputPath = UriMediaAccess.safReadPath(context, videoUri)
 
         try {
             onProgress(
@@ -210,7 +210,6 @@ class TranscribePipeline(
                 audioBytes = audioBytes
             )
         } finally {
-            runCatching { pfd.close() }
             temps.forEach { runCatching { if (it.exists()) it.delete() } }
             // Keep work dir cleanup light; remove leftover chunk files
             workDir.listFiles()?.forEach { runCatching { it.delete() } }

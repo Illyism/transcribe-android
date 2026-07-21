@@ -5,7 +5,7 @@ Kotlin + Jetpack Compose app for on-device transcription. Companion to `@illyism
 ## Product rules
 
 - **Never upload the full video.** Extract audio on-device with FFmpeg; only optimized Whisper chunks leave the device.
-- Support large local files (15GB+). Open via SAF + `/proc/self/fd/…` — do **not** copy the whole file into app storage.
+- Support large local files (15GB+). Open via SAF + FFmpegKit `saf:` paths (`getSafParameterForRead`) — do **not** copy the whole file into app storage, and do **not** use `/proc/self/fd/…` (Permission denied).
 - API key is required before Start; store with EncryptedSharedPreferences.
 - Defaults: ~20 min chunks, max 4 parallel uploads, Whisper `whisper-1`, 1.2× speed optimize (unless Raw mode).
 
@@ -102,7 +102,8 @@ Prefer non-blocking `logcat -d`. Visually inspect PNGs from `android screen` bef
 
 - **FFmpegKit `smartexception`**: `ffmpeg-kit-audio` needs `com.arthenica:smart-exception-java:0.2.1` (not `java9` — wrong package). Already in `app/build.gradle.kts`.
 - Device `unauthorized` → user must accept USB debugging prompt.
-- SAF persistable permission: take read permission when picking; keep PFD open for the whole FFmpeg extract.
+- SAF: take persistable read permission when picking; feed the content Uri through `FFmpegKitConfig.getSafParameterForRead` (not `/proc/self/fd/…`).
+- FFmpeg 8: do not use `-ac N` — use `-af aformat=channel_layouts=mono`.
 - Do not use blocking `adb logcat` without `-d`.
 
 ## Out of scope (unless asked)

@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.OpenableColumns
+import com.arthenica.ffmpegkit.FFmpegKitConfig
 import java.io.File
 
 data class VideoMeta(
@@ -42,14 +43,13 @@ object UriMediaAccess {
     }
 
     /**
-     * Open a readable fd path FFmpeg can consume without copying the whole 15GB file.
-     * Caller must keep [ParcelFileDescriptor] open while FFmpeg runs.
+     * Convert a SAF content [Uri] into an FFmpegKit `saf:` path.
+     * Do not use `/proc/self/fd/N` — native FFmpeg often gets Permission denied on it.
+     * Does not copy the file into app storage.
      */
-    fun openFdPath(context: Context, uri: Uri): Pair<android.os.ParcelFileDescriptor, String> {
-        val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+    fun safReadPath(context: Context, uri: Uri): String {
+        return FFmpegKitConfig.getSafParameterForRead(context, uri)
             ?: throw IllegalStateException("Could not open video. Check storage permission.")
-        val path = "/proc/self/fd/${pfd.fd}"
-        return pfd to path
     }
 
     fun workDir(context: Context): File {
