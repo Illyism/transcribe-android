@@ -34,7 +34,8 @@ fun SourceVideoPlayer(
     thumbnailPath: String,
     modifier: Modifier = Modifier
         .fillMaxWidth()
-        .aspectRatio(16f / 9f)
+        .aspectRatio(16f / 9f),
+    autoPlay: Boolean = false
 ) {
     val context = LocalContext.current
     val uri = remember(sourceUri) {
@@ -56,7 +57,7 @@ fun SourceVideoPlayer(
     val player = remember(uri) {
         ExoPlayer.Builder(context).build().apply {
             setMediaItem(MediaItem.fromUri(uri))
-            playWhenReady = false
+            playWhenReady = autoPlay
             prepare()
         }
     }
@@ -74,11 +75,11 @@ fun SourceVideoPlayer(
         }
     }
 
-    LaunchedEffect(uri) {
+    LaunchedEffect(uri, autoPlay) {
         playbackFailed = false
         player.setMediaItem(MediaItem.fromUri(uri))
         player.prepare()
-        player.playWhenReady = false
+        player.playWhenReady = autoPlay
     }
 
     if (playbackFailed) {

@@ -176,11 +176,9 @@ class MainActivity : ComponentActivity() {
                 // Snapshot reads so the bar recomposes with tab/stack changes.
                 val topLevel = navState.topLevelRoute
                 val currentKey = navState.backStacks[topLevel]?.lastOrNull()
-                // Keep bottom nav on tablet History list-detail (detail is top of stack).
+                // Keep app chrome on transcript detail (not a dead-end flow screen).
                 val showBottomBar = currentKey in TOP_LEVEL_KEYS ||
-                    (isWideWidth &&
-                        topLevel == AppKey.History &&
-                        currentKey is AppKey.TranscriptDetail)
+                    currentKey is AppKey.TranscriptDetail
 
                 fun runSkillOnTranscript(
                     transcriptId: String,
@@ -350,10 +348,6 @@ class MainActivity : ComponentActivity() {
                                     navigator.navigate(
                                         AppKey.SkillResults(key.transcriptId, skillId)
                                     )
-                                },
-                                onAnother = {
-                                    viewModel.chooseDifferent()
-                                    navigator.clearToRoot()
                                 },
                                 onBack = navigator::goBack,
                                 showBack = showBack

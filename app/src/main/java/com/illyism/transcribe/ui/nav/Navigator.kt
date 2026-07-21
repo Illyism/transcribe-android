@@ -83,16 +83,9 @@ class Navigator(val state: NavigationState) {
         }
     }
 
-    /** Home-tab flow: finished transcript detail (replace job screens). */
+    /** Finished job → Files tab detail so the library chrome stays visible. */
     fun openFinishedTranscript(id: String) {
-        ensureTopLevel(AppKey.Home)
-        when (currentKey()) {
-            is AppKey.Processing,
-            is AppKey.Selected,
-            is AppKey.TranscriptDetail ->
-                replaceTop(AppKey.TranscriptDetail(id))
-            else -> navigate(AppKey.TranscriptDetail(id))
-        }
+        openHistoryDetail(id)
     }
 
     /**

@@ -138,11 +138,11 @@ Transcription stays `whisper-1` (separate from Skills).
 
 - Material 3 with dynamic color (Material You) on API 31+; follows system light/dark. Amber fallback on older devices.
 - Bottom nav: **Home / Files / Skills** (per-tab back stacks; bar hidden on flow screens). Route key remains `AppKey.History`.
-- Files (History tab): client-side search by title / filename / summary / preview; rows show thumbnail (or video icon), title (fallback filename), optional filename under title, meta, and two-line summary (fallback SRT preview). Transcript detail plays the source via Media3 when `HistoryEntry.sourceUri` is available (persistable SAF Uri stored at append); otherwise falls back to the 16:9 Catalog thumbnail. Refreshes on tab select and when the list appears.
+- Files (History tab): client-side search by title / filename / summary / preview; rows show thumbnail (or video icon), title (fallback filename), optional filename under title, meta, and two-line summary (fallback SRT preview). Finished jobs land on Files detail (`openFinishedTranscript` → `openHistoryDetail`). Bottom nav stays visible on transcript detail. Refreshes on tab select and when the list appears.
 - One job per screen; no dashboard clutter
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
-- Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): AssistChip **Create something** row (one-tap skill run / Ask AI sheet / Manage skills); Preview; **Creations** list of cached skill runs; **Export** + transcribe another in the bottom bar; pencil edits Catalog `title` via `HistoryStore.update`
+- Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): compact media card (thumb + play badge opens Media3 dialog when `sourceUri` is set); AssistChip **Create something** row; Preview; **Creations**; Export FAB (bottom-end); pencil edits Catalog `title`
 
 ## Build & install
 
