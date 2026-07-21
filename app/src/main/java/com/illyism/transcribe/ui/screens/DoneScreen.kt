@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -76,6 +77,7 @@ fun DoneScreen(
     durationSeconds: Double,
     saveLocationLabel: String,
     onDownload: (ExportFormat) -> Unit,
+    onShare: () -> Unit,
     onCopyText: (String) -> Unit,
     onRename: (String) -> Unit,
     onAnother: () -> Unit,
@@ -228,11 +230,23 @@ fun DoneScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            SecondaryButton(
-                text = "Download",
-                onClick = { showDownload = true },
-                icon = Icons.Outlined.Download
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                PrimaryButton(
+                    text = "Download",
+                    onClick = { showDownload = true },
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.Download
+                )
+                SecondaryButton(
+                    text = "Share",
+                    onClick = onShare,
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.Share
+                )
+            }
 
             Spacer(modifier = Modifier.height(20.dp))
 

@@ -60,7 +60,7 @@ Progress stages: `EXTRACTING` → `OPTIMIZING` → `CHUNKING` → `TRANSCRIBING`
 - One job per screen; no dashboard clutter
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
-- Done screen: Download (txt/md/srt → `Downloads/Transcribe`) near the file card; Copy text is the primary action under the preview
+- Done screen: Download (txt/md/srt → `Downloads/Transcribe`) + Share next to the file card; Copy text under the preview
 
 ## Build & install
 

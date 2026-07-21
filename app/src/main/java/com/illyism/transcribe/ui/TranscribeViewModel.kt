@@ -10,6 +10,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.ExistingWorkPolicy
@@ -402,6 +403,22 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("transcript", text))
         _state.update { it.copy(snackbar = "Copied") }
+    }
+
+    fun shareSrt(): Intent? {
+        val path = _state.value.srtPath ?: return null
+        val file = File(path)
+        if (!file.exists()) return null
+        val uri = FileProvider.getUriForFile(
+            getApplication(),
+            "${getApplication<Application>().packageName}.fileprovider",
+            file
+        )
+        return Intent(Intent.ACTION_SEND).apply {
+            type = "application/x-subrip"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
     }
 
     fun downloadExport(format: ExportFormat) {

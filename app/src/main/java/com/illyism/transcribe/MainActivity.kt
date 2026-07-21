@@ -122,6 +122,11 @@ class MainActivity : ComponentActivity() {
                                 durationSeconds = state.durationSeconds,
                                 saveLocationLabel = viewModel.friendlySaveLocation(),
                                 onDownload = viewModel::downloadExport,
+                                onShare = {
+                                    viewModel.shareSrt()?.let {
+                                        startActivity(Intent.createChooser(it, "Share SRT"))
+                                    }
+                                },
                                 onCopyText = viewModel::copyText,
                                 onRename = viewModel::renameSrt,
                                 onAnother = viewModel::transcribeAnother,
