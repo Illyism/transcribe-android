@@ -133,9 +133,10 @@ fun SkillModelPicker(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    SkillModelTier.entries.forEach { tier ->
+                    listOf("Luna", "Terra", "Sol").forEachIndexed { index, name ->
+                        val tier = SkillModelTier.entries[index]
                         Text(
-                            tier.label,
+                            name,
                             style = MaterialTheme.typography.labelSmall,
                             color = if (tier == selected) trackColor else scheme.onSurfaceVariant,
                             fontWeight = if (tier == selected) FontWeight.SemiBold else FontWeight.Normal

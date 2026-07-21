@@ -100,13 +100,13 @@ Declarative skills transform a finished transcript via one chat/completions call
 
 ### Skills model tiers (Sol / Terra / Luna)
 
-Friendly picker in Settings (no “Advanced” section). Centralized in `SkillModelTier`:
+GPT-5.6 family ([OpenAI models](https://developers.openai.com/api/docs/models)). Picker in Settings + skill run (slider + pill). Centralized in `SkillModelTier`:
 
 | Tier | Model id | Role |
 |------|----------|------|
-| Luna | `gpt-4o-mini` | Fast & affordable |
-| Terra | `gpt-4o` | Default — balanced |
-| Sol | `o3` | Highest quality |
+| Luna | [`gpt-5.6-luna`](https://developers.openai.com/api/docs/models/gpt-5.6-luna) | Cost-sensitive, high-volume |
+| Terra | [`gpt-5.6-terra`](https://developers.openai.com/api/docs/models/gpt-5.6-terra) | Default — balanced intelligence & cost |
+| Sol | [`gpt-5.6-sol`](https://developers.openai.com/api/docs/models/gpt-5.6-sol) | Frontier — complex professional work (`gpt-5.6` alias) |
 
 Transcription stays `whisper-1` (separate from skills chat).
 

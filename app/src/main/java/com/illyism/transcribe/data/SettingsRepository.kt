@@ -69,7 +69,11 @@ class SettingsRepository(context: Context) {
     }
 }
 
-/** Friendly tiers for skills chat completions. Transcription stays whisper-1. */
+/**
+ * Friendly GPT-5.6 tiers for skills chat completions.
+ * See https://developers.openai.com/api/docs/models
+ * Transcription stays whisper-1.
+ */
 enum class SkillModelTier(
     val label: String,
     val modelId: String,
@@ -77,9 +81,24 @@ enum class SkillModelTier(
     /** Short quality chip shown in the model picker pill (e.g. Extra High). */
     val qualityLabel: String
 ) {
-    LUNA("Luna", "gpt-4o-mini", "Fast & affordable", "Fast"),
-    TERRA("Terra", "gpt-4o", "Balanced quality", "High"),
-    SOL("Sol", "o3", "Highest quality", "Extra High");
+    LUNA(
+        label = "5.6 Luna",
+        modelId = "gpt-5.6-luna",
+        subtitle = "Cost-sensitive, high-volume",
+        qualityLabel = "Fast"
+    ),
+    TERRA(
+        label = "5.6 Terra",
+        modelId = "gpt-5.6-terra",
+        subtitle = "Balanced intelligence & cost",
+        qualityLabel = "High"
+    ),
+    SOL(
+        label = "5.6 Sol",
+        modelId = "gpt-5.6-sol",
+        subtitle = "Frontier — complex work",
+        qualityLabel = "Extra High"
+    );
 
     companion object {
         fun fromStorage(value: String): SkillModelTier =
