@@ -54,9 +54,8 @@ app/src/main/java/com/illyism/transcribe/
       Navigator.kt             # navigate / goBack / replaceTop / clearToRoot / openFromDeepLink
       DeepLinks.kt             # transcribe:// URI parse + share intent
     skills/
-      SkillsViewModel.kt       # Skill CRUD + run state
-      SkillsScreen.kt / SkillEditorScreen.kt / SkillRunScreen.kt /
-      SkillResultsScreen.kt / SkillPickerScreen.kt
+      SkillsViewModel.kt       # Skill CRUD + quickRun / regenerate
+      SkillsScreen.kt / SkillEditorScreen.kt / SkillResultsScreen.kt
     theme/Theme.kt             # Amber accent #E8A838 on #121212
     screens/                   # Home, History, Selected, Processing, Done, Settings
     components/Components.kt   # PrimaryButton, LabeledDropdown, …
@@ -65,10 +64,10 @@ app/src/main/java/com/illyism/transcribe/
 ## Navigation (Nav3)
 
 - Composition-held back stacks via `rememberNavBackStack` (one per tab: Home / History / Skills).
-- Screens are addressed by ID: `TranscriptDetail(transcriptId)`, `SkillPicker(transcriptId)`, `SkillRun(transcriptId, skillId)`, `SkillResults(transcriptId, skillId)`, `SkillEditor(skillId?)`.
+- Screens are addressed by ID: `TranscriptDetail(transcriptId)`, `SkillResults(transcriptId, skillId)`, `SkillEditor(skillId?)`.
 - Finished transcripts load from `HistoryStore.get(id)` — not mirrored in `UiState`.
 - On pipeline DONE, ViewModel appends to HistoryStore and emits `finishedTranscriptId`; UI replaces `Processing` with `TranscriptDetail(id)`.
-- TranscriptDetail lists cached skill runs (`HistoryStore.listCachedSkillRuns`) under **Creations**; tap → `SkillResults(transcriptId, skillId)` (loads cache if no in-memory result).
+- TranscriptDetail launches skills via AssistChips (one tap → streaming `SkillResults`); lists cached runs under **Creations**; tap → `SkillResults` (loads cache if no in-memory result).
 - `TranscribeSessionStore` only holds the ephemeral active job (selected video + progress/error).
 - Deep links (`MainActivity` `singleTop` + `DeepLinks.kt`): `transcribe://transcript/{id}` → History → `TranscriptDetail`; `transcribe://skill/{transcriptId}/{skillId}` → History → detail → `SkillResults` (cached result required). Missing transcript → snackbar "Transcript not found". Transcript detail copies the app-scheme URI to the clipboard (not system share — `transcribe://` only opens this app).
 - **Adaptive History list-detail** (medium/expanded width): Material `ListDetailSceneStrategy` (`adaptive-navigation3:1.3.0-alpha09`, compileSdk 36–compatible) on `NavDisplay`. `History` = list pane, `TranscriptDetail` = detail pane; compact width keeps single-pane push. Selecting an item uses `Navigator.openHistoryDetail` (replace detail). Back clears detail first on tablet; DoneScreen hides back when History is wide. Home/Skills adaptive panes are out of scope for v1.
@@ -90,7 +89,7 @@ Progress stages: `EXTRACTING` → `OPTIMIZING` → `CHUNKING` → `TRANSCRIBING`
 
 Declarative skills transform a finished transcript via one Responses API call (`POST /v1/responses`). Skills are **not** a workflow builder — name, prompt, inputs, outputs, exports, icon/color, optional `defaultTier`.
 
-Request shape: `stream: true` + `instructions` (skill prompt + output contract) + `input` (metadata/transcript) + `reasoning: { effort, summary: "auto" }` + `text.format` json_schema (strict, one string property per selected output). No `max_output_tokens` (unlimited output). Do **not** put `reasoning.summary_text` in `include` (API 400). While running, SkillRunScreen shows a live Reasoning panel from `response.reasoning_summary_text.delta` when present; on `response.completed`, parse final JSON into result cards. Reasoning is best-effort — never fail a run if the summary is absent. Cancel aborts the OkHttp call.
+Request shape: `stream: true` + `instructions` (skill prompt + output contract) + `input` (metadata/transcript) + `reasoning: { effort, summary: "auto" }` + `text.format` json_schema (strict, one string property per selected output). No `max_output_tokens` (unlimited output). Do **not** put `reasoning.summary_text` in `include` (API 400). While running, SkillResultsScreen shows a live Reasoning panel from `response.reasoning_summary_text.delta` when present; on `response.completed`, parse final JSON into result cards. Reasoning is best-effort — never fail a run if the summary is absent. Cancel aborts the OkHttp call.
 
 ### Declarative skill format
 
@@ -114,16 +113,16 @@ Request shape: `stream: true` + `instructions` (skill prompt + output contract) 
 }
 ```
 
-- Built-ins: Repurpose (`TERRA_LIGHT`), Find Highlights (`SOL_LIGHT`), Study Guide (`SOL_MEDIUM`), Ask AI (`null` → last-used). System-only Catalog (`builtin_catalog`, `TERRA_LIGHT`) auto-runs after DONE for History title/summary — hidden from picker. See `domain/skills/BuiltInSkills.kt`.
-- Custom skills persist under `filesDir/skills.json`; import/export a single skill as `.json` via SAF.
-- Run flow: Done → **Create something** → pick skill → select outputs (or Ask AI prompt) → Generate → result cards (Copy / Share / Export all); collapsible **Reasoning** card when a summary is present.
+- Built-ins: Repurpose (`TERRA_LIGHT`), Find Highlights (`SOL_LIGHT`), Study Guide (`SOL_MEDIUM`), Ask AI (`null` → last-used). System-only Catalog (`builtin_catalog`, `TERRA_LIGHT`) auto-runs after DONE for History title/summary — hidden from chips. See `domain/skills/BuiltInSkills.kt`.
+- Custom skills persist under `filesDir/skills.json`; import/export a single skill as `.json` via SAF. Skills tab is management-only (tap card → Edit/Customize).
+- Run flow (one path): transcript detail AssistChips → `quickRun` with default outputs + tier → streaming `SkillResults`. Ask AI opens a bottom-sheet prompt first. Adjust (FilterChip outputs + model picker + Regenerate) lives in a results bottom sheet.
 - Runs in `viewModelScope` (not WorkManager) for v1; results (including reasoning) cached per `(transcriptId, skillId)` under `filesDir/skill_results/`.
 - TranscriptDetail **Creations** lists those caches (e.g. `Repurpose · 2h ago`); reopen via `SkillResults` + `SkillsViewModel.loadCachedResult`.
-- Skill run uses `SkillsViewModel.activeTier` (from `Skill.defaultTier` or last-used); changing the picker persists as the global last-used default. Settings still edits that global default.
+- Skill run uses `SkillsViewModel.activeTier` (from `Skill.defaultTier` or last-used); changing the Adjust/Settings picker persists as the global last-used default.
 
 ### Skills model picker
 
-GPT-5.6 family ([OpenAI models](https://developers.openai.com/api/docs/models)) plus reasoning effort ([reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)). Picker in Settings + skill run: pill opens a popup slider (Fastest → Smartest) with relative **cost** (`$`…`$$$$$`). Centralized in `SkillModelTier`:
+GPT-5.6 family ([OpenAI models](https://developers.openai.com/api/docs/models)) plus reasoning effort ([reasoning guide](https://developers.openai.com/api/docs/guides/reasoning)). Picker in Settings + results Adjust sheet: pill opens a popup slider (Fastest → Smartest) with relative **cost** (`$`…`$$$$$`). Centralized in `SkillModelTier`:
 
 | Stop | Model id | `reasoning.effort` | Cost | Label | Role |
 |------|----------|--------------------|------|-------|------|
@@ -138,12 +137,12 @@ Transcription stays `whisper-1` (separate from Skills).
 ## UI / design
 
 - Material 3 with dynamic color (Material You) on API 31+; follows system light/dark. Amber fallback on older devices.
-- Bottom nav: **Home / History / Skills** (per-tab back stacks; bar hidden on flow screens).
-- History: client-side search by title / filename / summary / preview; rows show thumbnail (or file icon), title (fallback filename), optional filename under title, meta, and two-line summary (fallback SRT preview). Refreshes on tab select and when the list screen appears.
+- Bottom nav: **Home / Files / Skills** (per-tab back stacks; bar hidden on flow screens). Route key remains `AppKey.History`.
+- Files (History tab): client-side search by title / filename / summary / preview; rows show thumbnail (or video icon), title (fallback filename), optional filename under title, meta, and two-line summary (fallback SRT preview). Transcript detail plays the source via Media3 when `HistoryEntry.sourceUri` is available (persistable SAF Uri stored at append); otherwise falls back to the 16:9 Catalog thumbnail. Refreshes on tab select and when the list appears.
 - One job per screen; no dashboard clutter
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
-- Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): **Export** (pick txt/md/srt → save to `Downloads/Transcribe`, then auto-open Share); **Create something** for Skills; **Creations** list of cached skill runs; Copy text under the preview; rename updates `HistoryStore` via `renameSrt`
+- Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): AssistChip **Create something** row (one-tap skill run / Ask AI sheet / Manage skills); Preview; **Creations** list of cached skill runs; **Export** + transcribe another in the bottom bar; pencil edits Catalog `title` via `HistoryStore.update`
 
 ## Build & install
 

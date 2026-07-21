@@ -1,7 +1,5 @@
 package com.illyism.transcribe.ui.screens
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -20,11 +18,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,21 +32,18 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.illyism.transcribe.data.HistoryEntry
 import com.illyism.transcribe.domain.SrtBuilder
-import java.io.File
+import com.illyism.transcribe.ui.components.LocalThumbnail
 import java.text.DateFormat
 import java.util.Date
 
@@ -86,12 +81,12 @@ fun HistoryScreen(
             .padding(top = 24.dp)
     ) {
         Text(
-            "History",
+            "Files",
             style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold)
         )
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            "Completed transcripts you can reuse with Skills.",
+            "Videos you've transcribed — open one to create with Skills.",
             style = MaterialTheme.typography.bodyMedium,
             color = scheme.onSurfaceVariant
         )
@@ -121,9 +116,9 @@ fun HistoryScreen(
         when {
             entries.isEmpty() -> {
                 HistoryEmptyState(
-                    icon = Icons.Outlined.History,
-                    title = "No transcripts yet",
-                    subtitle = "Finish a transcription to see it here."
+                    icon = Icons.Outlined.Folder,
+                    title = "No files yet",
+                    subtitle = "Transcribe a video and it will show up here."
                 )
             }
             filtered.isEmpty() -> {
@@ -205,7 +200,11 @@ private fun HistoryRow(
             .padding(14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        HistoryThumbnail(path = entry.thumbnailPath)
+        LocalThumbnail(
+            path = entry.thumbnailPath,
+            modifier = Modifier.size(56.dp),
+            fallbackIcon = Icons.Outlined.Videocam
+        )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -250,39 +249,6 @@ private fun HistoryRow(
                 Icons.Outlined.Delete,
                 contentDescription = "Delete",
                 tint = scheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun HistoryThumbnail(path: String) {
-    val scheme = MaterialTheme.colorScheme
-    val bitmap = remember(path) {
-        if (path.isBlank()) return@remember null
-        val file = File(path)
-        if (!file.exists()) return@remember null
-        runCatching { BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap() }.getOrNull()
-    }
-    Box(
-        modifier = Modifier
-            .size(56.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .background(scheme.primary.copy(alpha = 0.15f)),
-        contentAlignment = Alignment.Center
-    ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = bitmap,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-        } else {
-            Icon(
-                Icons.AutoMirrored.Outlined.InsertDriveFile,
-                contentDescription = null,
-                tint = scheme.primary
             )
         }
     }

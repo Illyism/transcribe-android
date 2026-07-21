@@ -21,7 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -49,6 +49,7 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import androidx.window.core.layout.WindowSizeClass.Companion.WIDTH_DP_MEDIUM_LOWER_BOUND
+import com.illyism.transcribe.domain.skills.BuiltInSkills
 import com.illyism.transcribe.domain.skills.SkillRunResult
 import com.illyism.transcribe.ui.TranscribeViewModel
 import com.illyism.transcribe.ui.adaptive.HistoryDetailPlaceholder
@@ -66,9 +67,7 @@ import com.illyism.transcribe.ui.screens.ProcessingScreen
 import com.illyism.transcribe.ui.screens.SelectedScreen
 import com.illyism.transcribe.ui.screens.SettingsScreen
 import com.illyism.transcribe.ui.skills.SkillEditorScreen
-import com.illyism.transcribe.ui.skills.SkillPickerScreen
 import com.illyism.transcribe.ui.skills.SkillResultsScreen
-import com.illyism.transcribe.ui.skills.SkillRunScreen
 import com.illyism.transcribe.ui.skills.SkillsScreen
 import com.illyism.transcribe.ui.skills.SkillsViewModel
 import com.illyism.transcribe.ui.theme.TranscribeTheme
@@ -183,15 +182,27 @@ class MainActivity : ComponentActivity() {
                         topLevel == AppKey.History &&
                         currentKey is AppKey.TranscriptDetail)
 
-                fun openSkillForTranscript(skillId: String) {
-                    val id = state.history.firstOrNull()?.id
-                    if (id.isNullOrBlank()) {
-                        viewModel.showMessage("Open a transcript from History first")
-                        navigator.navigate(AppKey.History)
-                        return
-                    }
-                    skillsViewModel.prepareRun(skillId)
-                    navigator.navigate(AppKey.SkillRun(id, skillId))
+                fun runSkillOnTranscript(
+                    transcriptId: String,
+                    skillId: String,
+                    prompt: String? = null
+                ) {
+                    val entry = viewModel.transcript(transcriptId) ?: return
+                    skillsViewModel.quickRun(
+                        skillId = skillId,
+                        transcriptId = transcriptId,
+                        filename = entry.filename.ifBlank { File(entry.srtPath).name },
+                        srtPath = entry.srtPath,
+                        language = entry.language,
+                        durationSeconds = entry.durationSeconds,
+                        apiKey = state.apiKey,
+                        prompt = prompt,
+                        onStarted = {
+                            navigator.navigate(
+                                AppKey.SkillResults(transcriptId, skillId)
+                            )
+                        }
+                    )
                 }
 
                 @Suppress("UNCHECKED_CAST")
@@ -231,7 +242,7 @@ class MainActivity : ComponentActivity() {
                             customSkills = skillsState.customSkills,
                             builtIns = skillsState.builtIns,
                             onNewSkill = { navigator.navigate(AppKey.SkillEditor()) },
-                            onOpenSkill = ::openSkillForTranscript,
+                            onOpenSkill = { id -> navigator.navigate(AppKey.SkillEditor(id)) },
                             onEdit = { id -> navigator.navigate(AppKey.SkillEditor(id)) },
                             onDuplicate = skillsViewModel::duplicate,
                             onDelete = skillsViewModel::delete,
@@ -298,7 +309,12 @@ class MainActivity : ComponentActivity() {
                                 preview = entry.preview,
                                 language = entry.language.takeIf { it.isNotBlank() },
                                 durationSeconds = entry.durationSeconds,
-                                saveLocationLabel = viewModel.friendlySaveLocation(entry.srtPath),
+                                title = entry.title,
+                                summary = entry.summary,
+                                sourceName = entry.filename,
+                                thumbnailPath = entry.thumbnailPath,
+                                sourceUri = entry.sourceUri,
+                                quickSkills = skillsState.builtIns + skillsState.customSkills,
                                 skillRuns = skillRuns,
                                 onExport = { format ->
                                     viewModel.exportAndShare(key.transcriptId, format) { intent ->
@@ -312,12 +328,22 @@ class MainActivity : ComponentActivity() {
                                     )
                                 },
                                 onCopyText = viewModel::copyText,
-                                onRename = { name ->
-                                    viewModel.renameSrt(key.transcriptId, name)
+                                onEditTitle = { name ->
+                                    viewModel.updateTitle(key.transcriptId, name)
                                 },
-                                onCreateSomething = {
+                                onRunSkill = { skillId ->
+                                    runSkillOnTranscript(key.transcriptId, skillId)
+                                },
+                                onAskAi = { prompt ->
+                                    runSkillOnTranscript(
+                                        key.transcriptId,
+                                        BuiltInSkills.askAi.id,
+                                        prompt = prompt
+                                    )
+                                },
+                                onManageSkills = {
                                     skillsViewModel.refresh()
-                                    navigator.navigate(AppKey.SkillPicker(key.transcriptId))
+                                    navigator.ensureTopLevel(AppKey.Skills)
                                 },
                                 onOpenSkillResult = { skillId ->
                                     skillsViewModel.loadCachedResult(key.transcriptId, skillId)
@@ -356,22 +382,6 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    entry<AppKey.SkillPicker> { key ->
-                        val entry = viewModel.transcript(key.transcriptId)
-                        SkillPickerScreen(
-                            transcriptName = entry?.filename ?: "transcript",
-                            customSkills = skillsState.customSkills,
-                            builtIns = skillsState.builtIns,
-                            onSelect = { skillId ->
-                                skillsViewModel.prepareRun(skillId)
-                                navigator.navigate(
-                                    AppKey.SkillRun(key.transcriptId, skillId)
-                                )
-                            },
-                            onBack = navigator::goBack
-                        )
-                    }
-
                     entry<AppKey.SkillEditor> { key ->
                         LaunchedEffect(key.skillId) {
                             if (key.skillId != null && skillsState.editing == null) {
@@ -397,57 +407,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    entry<AppKey.SkillRun> { key ->
-                        LaunchedEffect(key.skillId) {
-                            if (skillsState.activeSkill?.id != key.skillId) {
-                                skillsViewModel.prepareRun(key.skillId)
-                            }
-                        }
-                        val skill = skillsState.activeSkill
-                        val entry = viewModel.transcript(key.transcriptId)
-                        if (skill == null || entry == null || !File(entry.srtPath).exists()) {
-                            LaunchedEffect(Unit) { navigator.goBack() }
-                        } else {
-                            SkillRunScreen(
-                                skill = skill,
-                                transcriptName = entry.filename.ifBlank {
-                                    File(entry.srtPath).name
-                                },
-                                selectedOutputIds = skillsState.selectedOutputIds,
-                                customPrompt = skillsState.customPrompt,
-                                error = skillsState.error,
-                                skillModelTier = skillsState.activeTier,
-                                onSkillModelTier = { tier ->
-                                    skillsViewModel.setRunTier(tier)
-                                    viewModel.setSkillModelTier(tier)
-                                },
-                                onToggleOutput = skillsViewModel::toggleOutput,
-                                onCustomPrompt = skillsViewModel::setCustomPrompt,
-                                onGenerate = {
-                                    skillsViewModel.runSkill(
-                                        transcriptId = key.transcriptId,
-                                        filename = entry.filename.ifBlank {
-                                            File(entry.srtPath).name
-                                        },
-                                        srtPath = entry.srtPath,
-                                        language = entry.language,
-                                        durationSeconds = entry.durationSeconds,
-                                        apiKey = state.apiKey,
-                                        onStarted = {
-                                            navigator.navigate(
-                                                AppKey.SkillResults(
-                                                    key.transcriptId,
-                                                    key.skillId
-                                                )
-                                            )
-                                        }
-                                    )
-                                },
-                                onBack = navigator::goBack
-                            )
-                        }
-                    }
-
                     entry<AppKey.SkillResults> { key ->
                         LaunchedEffect(key.transcriptId, key.skillId) {
                             if (!skillsState.running ||
@@ -457,6 +416,7 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         val activeSkill = skillsState.activeSkill
+                        val entry = viewModel.transcript(key.transcriptId)
                         val cached = remember(
                             key.transcriptId,
                             key.skillId,
@@ -476,6 +436,12 @@ class MainActivity : ComponentActivity() {
                                 )
                             else -> cached
                         }
+                        // Ask AI: no output toggles; still allow model adjust + regenerate.
+                        val sheetOutputs = if (key.skillId == BuiltInSkills.askAi.id) {
+                            emptyList()
+                        } else {
+                            activeSkill?.takeIf { it.id == key.skillId }?.outputs.orEmpty()
+                        }
 
                         RequireOrBack(
                             ok = displayResult != null ||
@@ -487,6 +453,29 @@ class MainActivity : ComponentActivity() {
                                     result = displayResult,
                                     running = skillsState.running,
                                     error = skillsState.error,
+                                    outputs = sheetOutputs,
+                                    selectedOutputIds = skillsState.selectedOutputIds,
+                                    onToggleOutput = skillsViewModel::toggleOutput,
+                                    skillModelTier = skillsState.activeTier,
+                                    onSkillModelTier = { tier ->
+                                        skillsViewModel.setRunTier(tier)
+                                        viewModel.setSkillModelTier(tier)
+                                    },
+                                    onRegenerate = entry?.let { e ->
+                                        {
+                                            skillsViewModel.regenerate(
+                                                skillId = key.skillId,
+                                                transcriptId = key.transcriptId,
+                                                filename = e.filename.ifBlank {
+                                                    File(e.srtPath).name
+                                                },
+                                                srtPath = e.srtPath,
+                                                language = e.language,
+                                                durationSeconds = e.durationSeconds,
+                                                apiKey = state.apiKey
+                                            )
+                                        }
+                                    },
                                     onCopy = skillsViewModel::copyOutput,
                                     onShare = { text, title ->
                                         skillsViewModel.shareText(text, title)?.let {
@@ -545,9 +534,9 @@ class MainActivity : ComponentActivity() {
                                         navigator.navigate(AppKey.History)
                                     },
                                     icon = {
-                                        Icon(Icons.Outlined.History, contentDescription = "History")
+                                        Icon(Icons.Outlined.Folder, contentDescription = "Files")
                                     },
-                                    label = { Text("History") }
+                                    label = { Text("Files") }
                                 )
                                 NavigationBarItem(
                                     selected = navState.topLevelRoute == AppKey.Skills,

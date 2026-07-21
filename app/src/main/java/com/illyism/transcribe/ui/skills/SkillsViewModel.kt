@@ -176,15 +176,94 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    /**
+     * One-tap path: prepare defaults, optionally set Ask AI prompt, then run.
+     * [onStarted] is skipped when the API key is missing (snackbar instead).
+     */
+    fun quickRun(
+        skillId: String,
+        transcriptId: String,
+        filename: String,
+        srtPath: String,
+        language: String,
+        durationSeconds: Double,
+        apiKey: String,
+        prompt: String? = null,
+        onStarted: () -> Unit
+    ) {
+        if (apiKey.isBlank()) {
+            _state.update { it.copy(snackbar = "Add an API key in Settings") }
+            return
+        }
+        prepareRun(skillId)
+        if (prompt != null) {
+            setCustomPrompt(prompt)
+        }
+        runSkill(
+            transcriptId = transcriptId,
+            filename = filename,
+            srtPath = srtPath,
+            language = language,
+            durationSeconds = durationSeconds,
+            apiKey = apiKey,
+            onStarted = onStarted
+        )
+    }
+
+    /**
+     * Re-run the active skill with the current tier/outputs, staying on results.
+     * Prepares the skill first when reopening a cached result.
+     */
+    fun regenerate(
+        skillId: String,
+        transcriptId: String,
+        filename: String,
+        srtPath: String,
+        language: String,
+        durationSeconds: Double,
+        apiKey: String
+    ) {
+        if (apiKey.isBlank()) {
+            _state.update { it.copy(snackbar = "Add an API key in Settings") }
+            return
+        }
+        if (_state.value.activeSkill?.id != skillId) {
+            prepareRun(skillId)
+        }
+        if (_state.value.activeSkill?.id == BuiltInSkills.askAi.id &&
+            _state.value.customPrompt.isBlank()
+        ) {
+            _state.update {
+                it.copy(snackbar = "Ask a new question from the transcript")
+            }
+            return
+        }
+        runSkill(
+            transcriptId = transcriptId,
+            filename = filename,
+            srtPath = srtPath,
+            language = language,
+            durationSeconds = durationSeconds,
+            apiKey = apiKey,
+            onStarted = {}
+        )
+    }
+
     /** Hydrate in-memory result from HistoryStore so reopen supports copy/export. */
     fun loadCachedResult(transcriptId: String, skillId: String): Boolean {
         val current = _state.value
         if (current.running && current.activeSkill?.id == skillId) return true
         if (current.result?.skillId == skillId) return true
         val cached = app.historyStore.getCachedSkillResult(transcriptId, skillId) ?: return false
+        val skill = app.skillRepository.get(skillId)
         _state.update {
             it.copy(
                 result = cached,
+                activeSkill = skill ?: it.activeSkill,
+                selectedOutputIds = skill?.outputs?.map { o -> o.id }?.toSet()
+                    ?: it.selectedOutputIds,
+                activeTier = skill?.defaultTier?.let(SkillModelTier::fromStorage)
+                    ?: it.activeTier,
                 running = false,
                 error = null,
                 streamingReasoning = "",
@@ -227,7 +306,7 @@ class SkillsViewModel(application: Application) : AndroidViewModel(application) 
     ) {
         val skill = _state.value.activeSkill ?: return
         if (apiKey.isBlank()) {
-            _state.update { it.copy(error = "Add an API key in Settings first") }
+            _state.update { it.copy(snackbar = "Add an API key in Settings") }
             return
         }
         if (!File(srtPath).exists()) {

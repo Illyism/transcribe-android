@@ -82,6 +82,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
 
+    // Local video playback on transcript detail (SAF content URIs)
+    val media3 = "1.6.1"
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-ui:$media3")
+
     // Community-maintained FFmpegKit (audio variant keeps APK smaller)
     implementation("dev.ffmpegkit-maintained:ffmpeg-kit-audio:8.1.7")
     // Required at runtime — ffmpeg-kit looks for com.arthenica.smartexception.java.Exceptions

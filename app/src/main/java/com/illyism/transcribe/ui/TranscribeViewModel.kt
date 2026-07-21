@@ -229,7 +229,8 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                     srtPath = srt,
                                     preview = preview.orEmpty(),
                                     language = language.orEmpty(),
-                                    durationSeconds = duration
+                                    durationSeconds = duration,
+                                    sourceUri = selected?.uri?.toString().orEmpty()
                                 )
                                 _state.update {
                                     it.copy(
@@ -381,7 +382,8 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         srtPath: String,
         preview: String,
         language: String,
-        durationSeconds: Double
+        durationSeconds: Double,
+        sourceUri: String = ""
     ): HistoryEntry {
         return app.historyStore.append(
             filename = filename.removeSuffix(".srt").removeSuffix(".SRT")
@@ -389,7 +391,8 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             srtPath = srtPath,
             preview = preview,
             language = language,
-            durationSeconds = durationSeconds
+            durationSeconds = durationSeconds,
+            sourceUri = sourceUri
         )
     }
 
@@ -591,44 +594,21 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         return Uri.fromFile(outFile)
     }
 
-    fun renameSrt(transcriptId: String, newName: String) {
-        val entry = transcript(transcriptId) ?: return
-        val file = File(entry.srtPath)
-        if (!file.exists()) {
-            _state.update { it.copy(snackbar = "File not found") }
-            return
-        }
-        val trimmed = newName.trim().removeSuffix(".srt").removeSuffix(".SRT")
+    fun updateTitle(transcriptId: String, newTitle: String) {
+        val trimmed = newTitle.trim().take(120)
         if (trimmed.isBlank()) {
-            _state.update { it.copy(snackbar = "Enter a file name") }
+            _state.update { it.copy(snackbar = "Enter a title") }
             return
         }
-        val target = File(file.parentFile, "$trimmed.srt")
-        if (target.absolutePath == file.absolutePath) return
-        if (target.exists()) {
-            _state.update { it.copy(snackbar = "A file with that name already exists") }
-            return
+        val updated = app.historyStore.update(transcriptId) { e ->
+            e.copy(title = trimmed)
         }
-        if (!file.renameTo(target)) {
-            _state.update { it.copy(snackbar = "Could not rename file") }
+        if (updated == null) {
+            _state.update { it.copy(snackbar = "Transcript not found") }
             return
-        }
-        app.historyStore.update(transcriptId) { e ->
-            e.copy(
-                filename = target.nameWithoutExtension,
-                srtPath = target.absolutePath
-            )
         }
         refreshHistory()
-        _state.update { it.copy(snackbar = "Renamed") }
-    }
-
-    fun friendlySaveLocation(srtPath: String): String {
-        return when {
-            srtPath.contains("/files/transcripts") -> "App files / transcripts"
-            srtPath.contains("/Download") || srtPath.contains("/Downloads") -> "Downloads/Transcribe"
-            else -> File(srtPath).parentFile?.name ?: "App files"
-        }
+        _state.update { it.copy(snackbar = "Title updated") }
     }
 
     fun showMessage(message: String) {

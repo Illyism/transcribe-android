@@ -5,40 +5,43 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
-import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.SelectAll
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.illyism.transcribe.data.CachedSkillRun
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -68,8 +71,12 @@ import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.illyism.transcribe.domain.SrtBuilder
+import com.illyism.transcribe.domain.skills.BuiltInSkills
+import com.illyism.transcribe.domain.skills.Skill
+import com.illyism.transcribe.domain.skills.SkillIcons
 import com.illyism.transcribe.ui.components.PrimaryButton
 import com.illyism.transcribe.ui.components.SecondaryButton
+import com.illyism.transcribe.ui.components.SourceVideoPlayer
 import com.illyism.transcribe.ui.components.StickyBottomBar
 import com.illyism.transcribe.ui.components.formatBytes
 import java.io.File
@@ -77,24 +84,31 @@ import java.util.Locale
 
 private enum class PreviewMode { Text, Srt }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun DoneScreen(
     srtPath: String,
     preview: String,
     language: String?,
     durationSeconds: Double,
-    saveLocationLabel: String,
+    title: String = "",
+    summary: String = "",
+    sourceName: String = "",
+    thumbnailPath: String = "",
+    sourceUri: String = "",
+    quickSkills: List<Skill> = emptyList(),
     skillRuns: List<CachedSkillRun> = emptyList(),
     onExport: (ExportFormat) -> Unit,
     onCopyLink: () -> Unit,
     onCopyText: (String) -> Unit,
-    onRename: (String) -> Unit,
-    onCreateSomething: () -> Unit,
+    onEditTitle: (String) -> Unit,
+    onRunSkill: (String) -> Unit = {},
+    onAskAi: (String) -> Unit = {},
+    onManageSkills: () -> Unit = {},
     onOpenSkillResult: (String) -> Unit = {},
     onAnother: () -> Unit,
     onBack: () -> Unit,
-    /** False in History list-detail (tablet) where the list remains visible. */
+    /** False in Files list-detail (tablet) where the list remains visible. */
     showBack: Boolean = true,
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -108,12 +122,16 @@ fun DoneScreen(
         ?.takeIf { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) }
         ?.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
         ?: "Unknown"
-    val previewText = plain.ifBlank { srtBody.ifBlank { preview.ifBlank { "—" } } }
+    val previewText = srtBody.ifBlank { preview.ifBlank { "—" } }
+    val headerTitle = title.trim().ifBlank { "Transcript ready" }
+    val headerSubtitle = summary.trim().ifBlank { "Your subtitles have been saved." }
+    val videoLabel = sourceName.ifBlank { file.nameWithoutExtension.ifBlank { "Video" } }
 
-    var showRename by remember { mutableStateOf(false) }
+    var showEditTitle by remember { mutableStateOf(false) }
     var showFull by remember { mutableStateOf(false) }
     var selectAllOnOpen by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
+    var showAskAi by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -150,107 +168,183 @@ fun DoneScreen(
                 .padding(horizontal = 20.dp)
                 .padding(bottom = 12.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(scheme.surfaceVariant)
+            ) {
+                SourceVideoPlayer(
+                    sourceUri = sourceUri,
+                    thumbnailPath = thumbnailPath,
                     modifier = Modifier
-                        .size(36.dp)
-                        .clip(CircleShape)
-                        .background(scheme.primaryContainer),
-                    contentAlignment = Alignment.Center
+                        .fillMaxWidth()
+                        .aspectRatio(16f / 9f)
+                )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Icon(
-                        Icons.Outlined.Check,
-                        contentDescription = null,
-                        tint = scheme.onPrimaryContainer,
-                        modifier = Modifier.size(20.dp)
-                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            headerTitle,
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            videoLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            listOf(
+                                SrtBuilder.formatClock(duration),
+                                langLabel,
+                                formatBytes(if (file.exists()) file.length() else 0L)
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = scheme.onSurfaceVariant
+                        )
+                        if (headerSubtitle.isNotBlank() && title.isNotBlank()) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text(
+                                headerSubtitle,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = scheme.onSurfaceVariant,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    IconButton(onClick = { showEditTitle = true }) {
+                        Icon(
+                            Icons.Outlined.Edit,
+                            contentDescription = "Edit title",
+                            tint = scheme.onSurfaceVariant
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        "Transcript ready",
-                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
-                    )
-                    Text(
-                        "Your subtitles have been saved.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = scheme.onSurfaceVariant
+            }
+
+            if (title.isBlank()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    headerSubtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant
+                )
+            }
+
+            if (quickSkills.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    "Create something",
+                    style = MaterialTheme.typography.titleMedium
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    quickSkills.forEach { skill ->
+                        val iconColor = SkillIcons.color(skill.color)
+                        AssistChip(
+                            onClick = {
+                                if (skill.id == BuiltInSkills.askAi.id) {
+                                    showAskAi = true
+                                } else {
+                                    onRunSkill(skill.id)
+                                }
+                            },
+                            label = { Text(skill.name) },
+                            leadingIcon = {
+                                Icon(
+                                    SkillIcons.vector(skill.icon),
+                                    contentDescription = null,
+                                    tint = iconColor,
+                                    modifier = Modifier.size(AssistChipDefaults.IconSize)
+                                )
+                            }
+                        )
+                    }
+                    AssistChip(
+                        onClick = onManageSkills,
+                        label = { Text("Manage skills") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Settings,
+                                contentDescription = null,
+                                modifier = Modifier.size(AssistChipDefaults.IconSize)
+                            )
+                        }
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(scheme.surfaceVariant)
-                    .padding(14.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(scheme.primary.copy(alpha = 0.15f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.AutoMirrored.Outlined.InsertDriveFile,
-                            contentDescription = null,
-                            tint = scheme.primary
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                            file.name.ifBlank { "transcript.srt" },
-                            style = MaterialTheme.typography.titleMedium,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Spacer(modifier = Modifier.height(2.dp))
-                        Text(
-                            listOf(
-                                formatBytes(if (file.exists()) file.length() else 0L),
-                                SrtBuilder.formatClock(duration),
-                                langLabel
-                            ).joinToString(" · "),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = scheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(onClick = { showRename = true }) {
-                        Icon(
-                            Icons.Outlined.Edit,
-                            contentDescription = "Rename",
-                            tint = scheme.onSurfaceVariant
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Preview",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f)
+                )
+                IconButton(onClick = { onCopyText(srtBody) }) {
                     Icon(
-                        Icons.Outlined.FolderOpen,
-                        contentDescription = null,
-                        tint = scheme.primary,
-                        modifier = Modifier.size(16.dp)
+                        Icons.Outlined.ContentCopy,
+                        contentDescription = "Copy SRT",
+                        tint = scheme.primary
                     )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text("Saved to ", style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
-                    Text(
-                        saveLocationLabel,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            color = scheme.primary,
-                            fontWeight = FontWeight.Medium
-                        )
+                }
+                IconButton(
+                    onClick = {
+                        selectAllOnOpen = true
+                        showFull = true
+                    }
+                ) {
+                    Icon(
+                        Icons.Outlined.SelectAll,
+                        contentDescription = "Select all",
+                        tint = scheme.primary
                     )
                 }
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 160.dp, max = 320.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(scheme.surfaceVariant)
+                    .clickable {
+                        selectAllOnOpen = false
+                        showFull = true
+                    }
+                    .padding(16.dp)
+            ) {
+                Text(
+                    text = previewText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurface,
+                    maxLines = 18,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
             if (skillRuns.isNotEmpty()) {
-                Spacer(modifier = Modifier.height(20.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     "Creations",
                     style = MaterialTheme.typography.titleMedium
@@ -272,68 +366,9 @@ fun DoneScreen(
                     }
                 }
             }
-
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Preview",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                IconButton(
-                    onClick = { onCopyText(plain.ifBlank { srtBody }) }
-                ) {
-                    Icon(
-                        Icons.Outlined.ContentCopy,
-                        contentDescription = "Copy text",
-                        tint = scheme.primary
-                    )
-                }
-                IconButton(
-                    onClick = {
-                        selectAllOnOpen = true
-                        showFull = true
-                    }
-                ) {
-                    Icon(
-                        Icons.Outlined.SelectAll,
-                        contentDescription = "Select all",
-                        tint = scheme.primary
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(scheme.surfaceVariant)
-                    .clickable {
-                        selectAllOnOpen = false
-                        showFull = true
-                    }
-                    .padding(16.dp)
-            ) {
-                Text(
-                    text = previewText,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = scheme.onSurface,
-                    maxLines = 8,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
         }
 
         StickyBottomBar(showDivider = false) {
-            PrimaryButton(
-                text = "Create something",
-                onClick = onCreateSomething,
-                icon = Icons.Outlined.AutoAwesome
-            )
             SecondaryButton(
                 text = "Export",
                 onClick = { showExport = true },
@@ -347,13 +382,23 @@ fun DoneScreen(
         }
     }
 
-    if (showRename) {
-        RenameDialog(
-            currentName = file.nameWithoutExtension,
-            onDismiss = { showRename = false },
+    if (showAskAi) {
+        AskAiSheet(
+            onDismiss = { showAskAi = false },
+            onGenerate = { prompt ->
+                showAskAi = false
+                onAskAi(prompt)
+            }
+        )
+    }
+
+    if (showEditTitle) {
+        EditTitleDialog(
+            currentTitle = title.trim().ifBlank { videoLabel },
+            onDismiss = { showEditTitle = false },
             onConfirm = {
-                onRename(it)
-                showRename = false
+                onEditTitle(it)
+                showEditTitle = false
             }
         )
     }
@@ -604,9 +649,61 @@ private fun PreviewToggleChip(label: String, selected: Boolean, onClick: () -> U
     )
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun RenameDialog(
-    currentName: String,
+private fun AskAiSheet(
+    onDismiss: () -> Unit,
+    onGenerate: (String) -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    var prompt by remember { mutableStateOf("") }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
+                .navigationBarsPadding()
+        ) {
+            Text(
+                "Ask AI",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "Ask a question about this transcript.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = { prompt = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(140.dp)
+                    .focusRequester(focusRequester),
+                placeholder = { Text("What were the main decisions?") }
+            )
+            Spacer(modifier = Modifier.height(16.dp))
+            PrimaryButton(
+                text = "Generate",
+                onClick = { onGenerate(prompt.trim()) },
+                enabled = prompt.isNotBlank(),
+                icon = Icons.Outlined.AutoAwesome
+            )
+        }
+    }
+}
+
+@Composable
+private fun EditTitleDialog(
+    currentTitle: String,
     onDismiss: () -> Unit,
     onConfirm: (String) -> Unit
 ) {
@@ -614,8 +711,8 @@ private fun RenameDialog(
     var draft by remember {
         mutableStateOf(
             TextFieldValue(
-                text = currentName,
-                selection = TextRange(0, currentName.length)
+                text = currentTitle,
+                selection = TextRange(0, currentTitle.length)
             )
         )
     }
@@ -624,15 +721,12 @@ private fun RenameDialog(
     }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Rename") },
+        title = { Text("Edit title") },
         text = {
             OutlinedTextField(
                 value = draft,
                 onValueChange = { draft = it },
                 singleLine = true,
-                suffix = {
-                    Text(".srt", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                },
                 modifier = Modifier.focusRequester(focusRequester)
             )
         },
@@ -658,7 +752,7 @@ private fun FullTranscriptSheet(
 ) {
     val scheme = MaterialTheme.colorScheme
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var mode by remember { mutableStateOf(PreviewMode.Text) }
+    var mode by remember { mutableStateOf(PreviewMode.Srt) }
     val body = when (mode) {
         PreviewMode.Text -> plainText.ifBlank { srtBody }
         PreviewMode.Srt -> srtBody

@@ -27,12 +27,6 @@ sealed interface AppKey : NavKey {
     data class TranscriptDetail(val transcriptId: String) : AppKey
 
     @Serializable
-    data class SkillPicker(val transcriptId: String) : AppKey
-
-    @Serializable
-    data class SkillRun(val transcriptId: String, val skillId: String) : AppKey
-
-    @Serializable
     data class SkillResults(val transcriptId: String, val skillId: String) : AppKey
 
     @Serializable

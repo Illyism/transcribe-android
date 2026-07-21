@@ -9,12 +9,16 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,20 +28,25 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -52,6 +61,8 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.illyism.transcribe.data.SkillModelTier
+import com.illyism.transcribe.domain.skills.SkillOutput
 import com.illyism.transcribe.domain.skills.SkillOutputResult
 import com.illyism.transcribe.domain.skills.SkillOutputType
 import com.illyism.transcribe.domain.skills.SkillRunResult
@@ -59,14 +70,21 @@ import com.illyism.transcribe.ui.components.InfoBanner
 import com.illyism.transcribe.ui.components.MarkdownText
 import com.illyism.transcribe.ui.components.PrimaryButton
 import com.illyism.transcribe.ui.components.SecondaryButton
+import com.illyism.transcribe.ui.components.SkillModelPicker
 import com.illyism.transcribe.ui.components.StickyBottomBar
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun SkillResultsScreen(
     result: SkillRunResult,
     running: Boolean,
     error: String?,
+    outputs: List<SkillOutput> = emptyList(),
+    selectedOutputIds: Set<String> = emptySet(),
+    onToggleOutput: (String) -> Unit = {},
+    skillModelTier: SkillModelTier = SkillModelTier.TERRA_LIGHT,
+    onSkillModelTier: (SkillModelTier) -> Unit = {},
+    onRegenerate: (() -> Unit)? = null,
     onCopy: (String) -> Unit,
     onShare: (String, String) -> Unit,
     onExportAll: () -> Unit,
@@ -78,6 +96,8 @@ fun SkillResultsScreen(
     val scheme = MaterialTheme.colorScheme
     val reasoning = result.reasoning?.trim()?.takeIf { it.isNotBlank() }
     val listState = rememberLazyListState()
+    var showAdjust by remember { mutableStateOf(false) }
+    val canAdjust = onRegenerate != null && !running
 
     // While streaming, keep the newest content in view unless the user scrolls up.
     var followLatest by remember { mutableStateOf(true) }
@@ -104,6 +124,13 @@ fun SkillResultsScreen(
             navigationIcon = {
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                }
+            },
+            actions = {
+                if (canAdjust) {
+                    IconButton(onClick = { showAdjust = true }) {
+                        Icon(Icons.Outlined.Tune, contentDescription = "Adjust")
+                    }
                 }
             },
             // Scaffold already applies system bar padding — don't add it again.
@@ -156,6 +183,14 @@ fun SkillResultsScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    if (canAdjust) {
+                        SecondaryButton(
+                            text = "Adjust",
+                            onClick = { showAdjust = true },
+                            icon = Icons.Outlined.Tune,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                     if (result.outputs.size > 1) {
                         SecondaryButton(
                             text = "Share all",
@@ -177,6 +212,100 @@ fun SkillResultsScreen(
                     icon = Icons.Outlined.Check
                 )
             }
+        }
+    }
+
+    if (showAdjust && onRegenerate != null) {
+        AdjustSheet(
+            outputs = outputs,
+            selectedOutputIds = selectedOutputIds,
+            onToggleOutput = onToggleOutput,
+            skillModelTier = skillModelTier,
+            onSkillModelTier = onSkillModelTier,
+            onDismiss = { showAdjust = false },
+            onRegenerate = {
+                showAdjust = false
+                onRegenerate()
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun AdjustSheet(
+    outputs: List<SkillOutput>,
+    selectedOutputIds: Set<String>,
+    onToggleOutput: (String) -> Unit,
+    skillModelTier: SkillModelTier,
+    onSkillModelTier: (SkillModelTier) -> Unit,
+    onDismiss: () -> Unit,
+    onRegenerate: () -> Unit
+) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val canRegenerate = outputs.isEmpty() || selectedOutputIds.isNotEmpty()
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 24.dp)
+                .navigationBarsPadding()
+        ) {
+            Text(
+                "Adjust",
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "Change outputs or model, then regenerate.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            if (outputs.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("Outputs", style = MaterialTheme.typography.titleSmall)
+                Spacer(modifier = Modifier.height(8.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    outputs.forEach { out ->
+                        FilterChip(
+                            selected = out.id in selectedOutputIds,
+                            onClick = { onToggleOutput(out.id) },
+                            label = { Text(out.label) }
+                        )
+                    }
+                }
+                if (selectedOutputIds.isEmpty()) {
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(
+                        "Select at least one output",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(20.dp))
+            SkillModelPicker(
+                selected = skillModelTier,
+                onSelected = onSkillModelTier,
+                initiallyExpanded = true
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+            PrimaryButton(
+                text = "Regenerate",
+                onClick = onRegenerate,
+                enabled = canRegenerate,
+                icon = Icons.Outlined.AutoAwesome
+            )
         }
     }
 }

@@ -22,7 +22,9 @@ data class HistoryEntry(
     /** Two-line summary from Catalog enrich. */
     val summary: String = "",
     /** Absolute path to a local JPEG under filesDir/thumbnails/. */
-    val thumbnailPath: String = ""
+    val thumbnailPath: String = "",
+    /** Persistable content Uri of the source video/audio (empty if unavailable). */
+    val sourceUri: String = ""
 )
 
 /** Lightweight index row for a cached skill run on a transcript. */
@@ -57,6 +59,7 @@ class HistoryStore(context: Context) {
         preview: String,
         language: String = "",
         durationSeconds: Double = 0.0,
+        sourceUri: String = "",
         id: String = UUID.randomUUID().toString()
     ): HistoryEntry {
         synchronized(lock) {
@@ -73,7 +76,10 @@ class HistoryStore(context: Context) {
                 preview = preview.take(400),
                 language = language,
                 durationSeconds = durationSeconds,
-                createdAt = if (idx >= 0) list[idx].createdAt else System.currentTimeMillis()
+                createdAt = if (idx >= 0) list[idx].createdAt else System.currentTimeMillis(),
+                sourceUri = sourceUri.ifBlank {
+                    if (idx >= 0) list[idx].sourceUri else ""
+                }
             )
             if (idx >= 0) {
                 list[idx] = entry
@@ -178,7 +184,8 @@ class HistoryStore(context: Context) {
                             createdAt = o.optLong("createdAt", 0L),
                             title = o.optString("title"),
                             summary = o.optString("summary"),
-                            thumbnailPath = o.optString("thumbnailPath")
+                            thumbnailPath = o.optString("thumbnailPath"),
+                            sourceUri = o.optString("sourceUri")
                         )
                     )
                 }
@@ -206,6 +213,7 @@ class HistoryStore(context: Context) {
                     .put("title", e.title)
                     .put("summary", e.summary)
                     .put("thumbnailPath", e.thumbnailPath)
+                    .put("sourceUri", e.sourceUri)
             )
         }
         file.writeText(arr.toString(2))

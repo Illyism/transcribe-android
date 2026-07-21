@@ -11,7 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-/** Empty detail pane when History is open on a wide screen with no selection. */
+/** Empty detail pane when Files is open on a wide screen with no selection. */
 @Composable
 fun HistoryDetailPlaceholder() {
     Box(
@@ -21,7 +21,7 @@ fun HistoryDetailPlaceholder() {
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "Select a transcript",
+            text = "Select a file",
             style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center
