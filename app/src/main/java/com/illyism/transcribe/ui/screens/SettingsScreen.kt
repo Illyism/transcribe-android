@@ -6,6 +6,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -39,9 +40,11 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
+import com.illyism.transcribe.data.SkillModelTier
 import com.illyism.transcribe.ui.components.LinkButton
 import com.illyism.transcribe.ui.components.PrimaryButton
 import com.illyism.transcribe.ui.components.SecondaryButton
+import com.illyism.transcribe.ui.components.SkillModelPicker
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -50,11 +53,13 @@ fun SettingsScreen(
     maxParallel: Int,
     model: String,
     rawMode: Boolean,
+    skillModelTier: SkillModelTier,
     onSaveApiKey: (String) -> Unit,
     onClearApiKey: () -> Unit,
     onChunkMinutes: (Int) -> Unit,
     onMaxParallel: (Int) -> Unit,
     onRawMode: (Boolean) -> Unit,
+    onSkillModelTier: (SkillModelTier) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -74,6 +79,7 @@ fun SettingsScreen(
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
                 }
             },
+            windowInsets = WindowInsets(0, 0, 0, 0),
             colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.background)
         )
 
@@ -150,7 +156,21 @@ fun SettingsScreen(
             Text("Transcription model", style = MaterialTheme.typography.bodyLarge)
             Text(model, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
+            Text("Skills model", style = MaterialTheme.typography.titleMedium)
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                "Used for Create something / Skills. Transcription stays $model.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(12.dp))
+            SkillModelPicker(
+                selected = skillModelTier,
+                onSelected = onSkillModelTier
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically

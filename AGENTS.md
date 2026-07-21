@@ -17,6 +17,7 @@ Kotlin + Jetpack Compose app for on-device transcription. Companion to `@illyism
 | Background work | WorkManager + foreground service (`dataSync`) |
 | FFmpeg | `dev.ffmpegkit-maintained:ffmpeg-kit-audio` |
 | Whisper | OkHttp multipart → OpenAI `/v1/audio/transcriptions` |
+| Skills (chat) | OkHttp JSON → OpenAI `/v1/chat/completions` (`response_format: json_object`) |
 | Package / app id | `com.illyism.transcribe` |
 | Min / target SDK | 26 / 35, JDK 17 |
 
@@ -24,23 +25,35 @@ Kotlin + Jetpack Compose app for on-device transcription. Companion to `@illyism
 
 ```
 app/src/main/java/com/illyism/transcribe/
-  MainActivity.kt              # Compose host + SAF picker
-  TranscribeApp.kt             # Application, notification channel
+  MainActivity.kt              # Compose host + bottom nav + SAF pickers
+  TranscribeApp.kt             # Application, singletons, notification channel
   data/
-    SettingsRepository.kt      # Encrypted prefs (API key, chunk, parallel, raw)
+    SettingsRepository.kt      # Encrypted prefs (API key, chunk, parallel, raw, skillModelTier)
     TranscribeSessionStore.kt  # Selected file + progress/result across process death
+    SkillRepository.kt         # Built-ins + custom skills → skills.json
+    HistoryStore.kt            # Completed transcripts + cached skill results → history.json
   domain/
     FfmpegProcessor.kt         # extract / optimize / chunk
     WhisperClient.kt           # parallel-safe HTTP client
+    ChatClient.kt              # chat/completions for Skills
     TranscribePipeline.kt      # end-to-end job
     UriMediaAccess.kt          # meta + fd path (no full copy)
     SrtBuilder.kt / Models.kt
+    skills/
+      Skill.kt                 # Skill model, inputs/outputs/exports, icon map
+      BuiltInSkills.kt         # Repurpose, Study Guide, Find Highlights, Ask AI
+      SkillJson.kt             # Skill ↔ JSON
+      SkillRunner.kt           # Build messages + parse JSON results
   work/TranscribeWorker.kt     # WorkManager entry
   ui/
-    TranscribeViewModel.kt
+    TranscribeViewModel.kt     # Pipeline + nav + history
+    skills/
+      SkillsViewModel.kt       # Skill CRUD + run state
+      SkillsScreen.kt / SkillEditorScreen.kt / SkillRunScreen.kt /
+      SkillResultsScreen.kt / SkillPickerScreen.kt
     theme/Theme.kt             # Amber accent #E8A838 on #121212
-    screens/                   # Home, Selected, Processing, Done, Settings
-    components/Components.kt
+    screens/                   # Home, History, Selected, Processing, Done, Settings
+    components/Components.kt   # PrimaryButton, LabeledDropdown, …
 ```
 
 ## Pipeline (must match CLI intent)
@@ -51,16 +64,60 @@ app/src/main/java/com/illyism/transcribe/
 4. Transcribe chunks with limited concurrency
 5. Merge segments with speed/offset correction → write `.srt` under app external files
 6. Delete temp audio/chunks in `finally`
+7. On DONE, append to `HistoryStore` so Skills can reuse the transcript
 
 Progress stages: `EXTRACTING` → `OPTIMIZING` → `CHUNKING` → `TRANSCRIBING` → `SAVING` → `DONE` / `FAILED`.
+
+## Skills system
+
+Declarative skills transform a finished transcript via one chat/completions call. Skills are **not** a workflow builder — name, prompt, inputs, outputs, exports, icon/color.
+
+### Declarative skill format
+
+```json
+{
+  "id": "custom_…",
+  "name": "Repurpose",
+  "description": "…",
+  "icon": "sparkles",
+  "color": "#E8A838",
+  "prompt": "Create platform-specific content…",
+  "inputs": ["TRANSCRIPT", "SRT", "METADATA"],
+  "outputs": [
+    { "id": "x_thread", "label": "X thread", "type": "X_THREAD", "hint": "…" }
+  ],
+  "exports": ["COPY", "SHARE", "MARKDOWN"],
+  "category": "CUSTOM",
+  "builtIn": false,
+  "estimatedRuntime": "~30s"
+}
+```
+
+- Built-ins: Repurpose, Study Guide, Find Highlights, Ask AI (`domain/skills/BuiltInSkills.kt`).
+- Custom skills persist under `filesDir/skills.json`; import/export a single skill as `.json` via SAF.
+- Run flow: Done → **Create something** → pick skill → select outputs (or Ask AI prompt) → Generate → result cards (Copy / Share / Export all).
+- Runs in `viewModelScope` (not WorkManager) for v1; results cached per `(transcriptId, skillId)`.
+
+### Skills model tiers (Sol / Terra / Luna)
+
+Friendly picker in Settings (no “Advanced” section). Centralized in `SkillModelTier`:
+
+| Tier | Model id | Role |
+|------|----------|------|
+| Luna | `gpt-4o-mini` | Fast & affordable |
+| Terra | `gpt-4o` | Default — balanced |
+| Sol | `o3` | Highest quality |
+
+Transcription stays `whisper-1` (separate from skills chat).
 
 ## UI / design
 
 - Material 3 with dynamic color (Material You) on API 31+; follows system light/dark. Amber fallback on older devices.
+- Bottom nav: **Home / History / Skills** (hidden during Selected / Processing / Done / Settings / skill flows).
 - One job per screen; no dashboard clutter
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
-- Done screen: Download (txt/md/srt → `Downloads/Transcribe`) + Share next to the file card; Copy text under the preview
+- Done screen: **Export** (pick txt/md/srt → save to `Downloads/Transcribe`, then auto-open Share); **Create something** for Skills; Copy text under the preview
 
 ## Build & install
 
@@ -112,3 +169,4 @@ Prefer non-blocking `logcat -d`. Visually inspect PNGs from `android screen` bef
 - Accounts, cloud library, YouTube in-app browser
 - iOS / React Native
 - Publishing to Play Store / signing configs beyond debug
+- Pro / monetization badges for Skills

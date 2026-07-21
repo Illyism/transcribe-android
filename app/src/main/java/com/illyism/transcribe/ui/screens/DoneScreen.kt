@@ -23,13 +23,17 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.FolderOpen
-import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.IosShare
+import androidx.compose.material.icons.outlined.Subtitles
 import androidx.compose.material.icons.outlined.Videocam
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -76,10 +80,10 @@ fun DoneScreen(
     language: String?,
     durationSeconds: Double,
     saveLocationLabel: String,
-    onDownload: (ExportFormat) -> Unit,
-    onShare: () -> Unit,
+    onExport: (ExportFormat) -> Unit,
     onCopyText: (String) -> Unit,
     onRename: (String) -> Unit,
+    onCreateSomething: () -> Unit,
     onAnother: () -> Unit,
     onBack: () -> Unit
 ) {
@@ -99,7 +103,7 @@ fun DoneScreen(
     var previewMode by remember { mutableStateOf(PreviewMode.Text) }
     var showRename by remember { mutableStateOf(false) }
     var showFull by remember { mutableStateOf(false) }
-    var showDownload by remember { mutableStateOf(false) }
+    var showExport by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -230,23 +234,18 @@ fun DoneScreen(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                PrimaryButton(
-                    text = "Download",
-                    onClick = { showDownload = true },
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.Download
-                )
-                SecondaryButton(
-                    text = "Share",
-                    onClick = onShare,
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.Share
-                )
-            }
+            PrimaryButton(
+                text = "Export",
+                onClick = { showExport = true },
+                icon = Icons.Outlined.IosShare
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+            PrimaryButton(
+                text = "Create something",
+                onClick = onCreateSomething,
+                icon = Icons.Outlined.AutoAwesome
+            )
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -321,12 +320,16 @@ fun DoneScreen(
         )
     }
 
-    if (showDownload) {
-        DownloadFormatSheet(
-            onDismiss = { showDownload = false },
+    if (showExport) {
+        ExportFormatSheet(
+            onDismiss = { showExport = false },
+            onCopyText = {
+                showExport = false
+                onCopyText(plain.ifBlank { srtBody })
+            },
             onSelect = { format ->
-                showDownload = false
-                onDownload(format)
+                showExport = false
+                onExport(format)
             }
         )
     }
@@ -344,8 +347,9 @@ fun DoneScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DownloadFormatSheet(
+private fun ExportFormatSheet(
     onDismiss: () -> Unit,
+    onCopyText: () -> Unit,
     onSelect: (ExportFormat) -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
@@ -362,31 +366,62 @@ private fun DownloadFormatSheet(
                 .padding(bottom = 24.dp)
         ) {
             Text(
-                "Download as",
+                "Export as",
                 style = MaterialTheme.typography.titleLarge,
                 modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
             )
             Text(
-                "Saved to Downloads/Transcribe",
+                "Copy, or save to Downloads/Transcribe and open Share",
                 style = MaterialTheme.typography.bodyMedium,
                 color = scheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 20.dp)
             )
             Spacer(modifier = Modifier.height(8.dp))
+            ExportSheetRow(
+                label = "Copy text",
+                supporting = "Plain transcript to clipboard",
+                icon = Icons.Outlined.ContentCopy,
+                onClick = onCopyText
+            )
             ExportFormat.entries.forEach { format ->
-                ListItem(
-                    headlineContent = { Text(format.label) },
-                    leadingContent = {
-                        Icon(Icons.Outlined.Download, contentDescription = null, tint = scheme.primary)
-                    },
-                    colors = ListItemDefaults.colors(containerColor = scheme.surface),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onSelect(format) }
+                ExportSheetRow(
+                    label = format.label,
+                    supporting = "Save & share",
+                    icon = iconForExportFormat(format),
+                    onClick = { onSelect(format) }
                 )
             }
         }
     }
+}
+
+@Composable
+private fun ExportSheetRow(
+    label: String,
+    supporting: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    val scheme = MaterialTheme.colorScheme
+    ListItem(
+        headlineContent = { Text(label) },
+        supportingContent = {
+            Text(supporting, color = scheme.onSurfaceVariant)
+        },
+        leadingContent = {
+            Icon(icon, contentDescription = null, tint = scheme.primary)
+        },
+        colors = ListItemDefaults.colors(containerColor = scheme.surface),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+    )
+}
+
+private fun iconForExportFormat(format: ExportFormat): ImageVector = when (format) {
+    ExportFormat.TXT -> Icons.Outlined.Description
+    ExportFormat.MD -> Icons.Outlined.Code
+    ExportFormat.SRT -> Icons.Outlined.Subtitles
 }
 
 @Composable

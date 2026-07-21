@@ -4,7 +4,9 @@ import android.app.Application
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.os.Build
+import com.illyism.transcribe.data.HistoryStore
 import com.illyism.transcribe.data.SettingsRepository
+import com.illyism.transcribe.data.SkillRepository
 import com.illyism.transcribe.data.TranscribeSessionStore
 
 class TranscribeApp : Application() {
@@ -12,11 +14,17 @@ class TranscribeApp : Application() {
         private set
     lateinit var sessionStore: TranscribeSessionStore
         private set
+    lateinit var skillRepository: SkillRepository
+        private set
+    lateinit var historyStore: HistoryStore
+        private set
 
     override fun onCreate() {
         super.onCreate()
         settings = SettingsRepository(this)
         sessionStore = TranscribeSessionStore(this)
+        skillRepository = SkillRepository(this)
+        historyStore = HistoryStore(this)
         createNotificationChannel()
     }
 
