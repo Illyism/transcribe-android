@@ -43,7 +43,8 @@ fun PrimaryButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    icon: ImageVector? = null
 ) {
     Button(
         onClick = onClick,
@@ -59,6 +60,10 @@ fun PrimaryButton(
             disabledContentColor = Color(0xFF1A1200).copy(alpha = 0.5f)
         )
     ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+        }
         Text(text, style = MaterialTheme.typography.labelLarge)
     }
 }
@@ -68,7 +73,8 @@ fun SecondaryButton(
     text: String,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    icon: ImageVector? = null
 ) {
     OutlinedButton(
         onClick = onClick,
@@ -79,6 +85,10 @@ fun SecondaryButton(
         shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
     ) {
+        if (icon != null) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(modifier = Modifier.width(8.dp))
+        }
         Text(text, style = MaterialTheme.typography.labelLarge)
     }
 }

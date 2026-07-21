@@ -117,11 +117,40 @@ class MainActivity : ComponentActivity() {
                             AppRoute.Done -> DoneScreen(
                                 srtPath = state.srtPath.orEmpty(),
                                 preview = state.preview.orEmpty(),
+                                language = state.language,
+                                durationSeconds = state.durationSeconds,
+                                saveLocationLabel = viewModel.friendlySaveLocation(),
                                 onShare = {
-                                    viewModel.shareSrt()?.let { startActivity(Intent.createChooser(it, "Share SRT")) }
+                                    viewModel.shareSrt()?.let {
+                                        startActivity(Intent.createChooser(it, "Share SRT"))
+                                    } ?: run {
+                                        // no-op; snackbar handled elsewhere if needed
+                                    }
                                 },
-                                onCopyPreview = viewModel::copyPreview,
-                                onAnother = viewModel::transcribeAnother
+                                onOpenFile = {
+                                    val intent = viewModel.openSrt()
+                                    if (intent != null) {
+                                        runCatching { startActivity(intent) }
+                                            .onFailure {
+                                                startActivity(
+                                                    Intent.createChooser(
+                                                        viewModel.shareSrt(),
+                                                        "Open with"
+                                                    )
+                                                )
+                                            }
+                                    }
+                                },
+                                onCopyText = viewModel::copyPlainText,
+                                onRename = viewModel::renameSrt,
+                                onOpenSourceVideo = {
+                                    viewModel.openSourceVideo()?.let { startActivity(it) }
+                                },
+                                onEditSave = viewModel::saveEditedTranscript,
+                                onReadSrt = viewModel::readSrtBody,
+                                onTranscribeAgain = viewModel::transcribeAgain,
+                                onAnother = viewModel::transcribeAnother,
+                                onBack = viewModel::transcribeAnother
                             )
 
                             AppRoute.Settings -> SettingsScreen(

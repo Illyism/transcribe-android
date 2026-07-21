@@ -18,6 +18,7 @@ import androidx.work.workDataOf
 import com.illyism.transcribe.TranscribeApp
 import com.illyism.transcribe.data.TranscribeSessionStore
 import com.illyism.transcribe.domain.PipelineStage
+import com.illyism.transcribe.domain.SrtBuilder
 import com.illyism.transcribe.domain.UriMediaAccess
 import com.illyism.transcribe.work.TranscribeWorker
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +47,8 @@ data class UiState(
     val error: String? = null,
     val srtPath: String? = null,
     val preview: String? = null,
+    val language: String? = null,
+    val durationSeconds: Double = 0.0,
     val snackbar: String? = null
 )
 
@@ -88,12 +91,17 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
 
         when {
             srt != null -> {
+                val srtBody = runCatching { File(srt).readText() }.getOrDefault(preview.orEmpty())
                 _state.update {
                     it.copy(
                         route = AppRoute.Done,
                         selected = selected,
                         srtPath = srt,
-                        preview = preview,
+                        preview = preview ?: SrtBuilder.preview(srtBody),
+                        language = app.sessionStore.resultLanguage(),
+                        durationSeconds = app.sessionStore.resultDurationSeconds()
+                            .takeIf { d -> d > 0 }
+                            ?: SrtBuilder.durationSeconds(srtBody),
                         stage = PipelineStage.DONE,
                         percent = 100
                     )
@@ -171,6 +179,12 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                 ?: app.sessionStore.resultSrtPath()
                             val preview = info.outputData.getString(TranscribeWorker.KEY_PREVIEW)
                                 ?: app.sessionStore.resultPreview()
+                            val language = info.outputData.getString(TranscribeWorker.KEY_LANGUAGE)
+                                ?: app.sessionStore.resultLanguage()
+                            val duration = info.outputData.getFloat(
+                                TranscribeWorker.KEY_DURATION_SEC,
+                                app.sessionStore.resultDurationSeconds().toFloat()
+                            ).toDouble()
                             if (srt != null) {
                                 _state.update {
                                     it.copy(
@@ -179,6 +193,8 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                         percent = 100,
                                         srtPath = srt,
                                         preview = preview,
+                                        language = language,
+                                        durationSeconds = duration,
                                         error = null
                                     )
                                 }
@@ -374,31 +390,128 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         refreshSettings()
     }
 
-    fun shareSrt(): Intent? {
-        val path = _state.value.srtPath ?: return null
-        val file = File(path)
-        if (!file.exists()) return null
-        val uri = FileProvider.getUriForFile(
-            getApplication(),
-            "${getApplication<Application>().packageName}.fileprovider",
-            file
-        )
-        return Intent(Intent.ACTION_SEND).apply {
+    fun shareSrt(): Intent? = srtContentUri()?.let { uri ->
+        Intent(Intent.ACTION_SEND).apply {
             type = "application/x-subrip"
             putExtra(Intent.EXTRA_STREAM, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
 
-    fun copyPreview() {
-        val preview = _state.value.preview ?: return
+    fun openSrt(): Intent? = srtContentUri()?.let { uri ->
+        Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/x-subrip")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    fun openSourceVideo(): Intent? {
+        val uri = _state.value.selected?.uri ?: return null
+        return Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/*")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+    }
+
+    fun copyPlainText() {
+        val path = _state.value.srtPath ?: return
+        val srt = runCatching { File(path).readText() }.getOrNull()
+            ?: _state.value.preview
+            ?: return
+        val plain = SrtBuilder.plainText(srt).ifBlank { srt }
         val clipboard = getApplication<Application>()
             .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("transcript", preview))
-        _state.update { it.copy(snackbar = "Preview copied") }
+        clipboard.setPrimaryClip(ClipData.newPlainText("transcript", plain))
+        _state.update { it.copy(snackbar = "Transcript copied") }
     }
+
+    fun renameSrt(newName: String) {
+        val path = _state.value.srtPath ?: return
+        val file = File(path)
+        if (!file.exists()) {
+            _state.update { it.copy(snackbar = "File not found") }
+            return
+        }
+        val trimmed = newName.trim().removeSuffix(".srt").removeSuffix(".SRT")
+        if (trimmed.isBlank()) {
+            _state.update { it.copy(snackbar = "Enter a file name") }
+            return
+        }
+        val target = File(file.parentFile, "$trimmed.srt")
+        if (target.absolutePath == file.absolutePath) return
+        if (target.exists()) {
+            _state.update { it.copy(snackbar = "A file with that name already exists") }
+            return
+        }
+        if (!file.renameTo(target)) {
+            _state.update { it.copy(snackbar = "Could not rename file") }
+            return
+        }
+        val preview = _state.value.preview.orEmpty()
+        app.sessionStore.saveResult(
+            target.absolutePath,
+            preview,
+            _state.value.language.orEmpty(),
+            _state.value.durationSeconds
+        )
+        _state.update {
+            it.copy(srtPath = target.absolutePath, snackbar = "Renamed")
+        }
+    }
+
+    fun saveEditedTranscript(srtBody: String) {
+        val path = _state.value.srtPath ?: return
+        val file = File(path)
+        runCatching {
+            file.writeText(srtBody, Charsets.UTF_8)
+            app.sessionStore.saveResult(
+                path,
+                SrtBuilder.preview(srtBody),
+                _state.value.language.orEmpty(),
+                SrtBuilder.durationSeconds(srtBody).takeIf { it > 0 }
+                    ?: _state.value.durationSeconds
+            )
+            _state.update {
+                it.copy(
+                    preview = SrtBuilder.preview(srtBody),
+                    durationSeconds = SrtBuilder.durationSeconds(srtBody)
+                        .takeIf { d -> d > 0 } ?: it.durationSeconds,
+                    snackbar = "Transcript saved"
+                )
+            }
+        }.onFailure {
+            _state.update { state -> state.copy(snackbar = "Could not save edits") }
+        }
+    }
+
+    fun readSrtBody(): String {
+        val path = _state.value.srtPath ?: return _state.value.preview.orEmpty()
+        return runCatching { File(path).readText() }.getOrDefault(_state.value.preview.orEmpty())
+    }
+
+    fun friendlySaveLocation(): String {
+        val path = _state.value.srtPath ?: return "App files"
+        return when {
+            path.contains("/files/transcripts") -> "App files / transcripts"
+            path.contains("/Download") || path.contains("/Downloads") -> "Downloads/Transcribe"
+            else -> File(path).parentFile?.name ?: "App files"
+        }
+    }
+
+    fun transcribeAgain() = startTranscription()
 
     fun consumeSnackbar() {
         _state.update { it.copy(snackbar = null) }
+    }
+
+    private fun srtContentUri(): Uri? {
+        val path = _state.value.srtPath ?: return null
+        val file = File(path)
+        if (!file.exists()) return null
+        return FileProvider.getUriForFile(
+            getApplication(),
+            "${getApplication<Application>().packageName}.fileprovider",
+            file
+        )
     }
 }

@@ -70,11 +70,18 @@ class TranscribeWorker(
                 setForegroundAsync(createForegroundInfo(progress.message, progress.overallPercent))
             }
 
-            app.sessionStore.saveResult(result.srtPath, result.preview)
+            app.sessionStore.saveResult(
+                result.srtPath,
+                result.preview,
+                result.language,
+                result.durationSeconds
+            )
             Result.success(
                 workDataOf(
                     KEY_SRT to result.srtPath,
-                    KEY_PREVIEW to result.preview
+                    KEY_PREVIEW to result.preview,
+                    KEY_LANGUAGE to result.language,
+                    KEY_DURATION_SEC to result.durationSeconds.toFloat()
                 )
             )
         } catch (t: Throwable) {
@@ -133,6 +140,8 @@ class TranscribeWorker(
         const val KEY_MESSAGE = "message"
         const val KEY_SRT = "srt"
         const val KEY_PREVIEW = "preview"
+        const val KEY_LANGUAGE = "language"
+        const val KEY_DURATION_SEC = "duration_sec"
         const val KEY_ERROR = "error"
         private const val NOTIFICATION_ID = 42
     }

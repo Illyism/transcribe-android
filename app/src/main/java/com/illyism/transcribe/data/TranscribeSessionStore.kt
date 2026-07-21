@@ -28,10 +28,17 @@ class TranscribeSessionStore(context: Context) {
             .apply()
     }
 
-    fun saveResult(srtPath: String, preview: String) {
+    fun saveResult(
+        srtPath: String,
+        preview: String,
+        language: String = "",
+        durationSeconds: Double = 0.0
+    ) {
         prefs.edit()
             .putString(KEY_RESULT_SRT, srtPath)
             .putString(KEY_RESULT_PREVIEW, preview)
+            .putString(KEY_LANGUAGE, language)
+            .putFloat(KEY_DURATION_SEC, durationSeconds.toFloat())
             .remove(KEY_ERROR)
             .apply()
     }
@@ -65,6 +72,8 @@ class TranscribeSessionStore(context: Context) {
 
     fun resultSrtPath(): String? = prefs.getString(KEY_RESULT_SRT, null)
     fun resultPreview(): String? = prefs.getString(KEY_RESULT_PREVIEW, null)
+    fun resultLanguage(): String? = prefs.getString(KEY_LANGUAGE, null)?.takeIf { it.isNotBlank() }
+    fun resultDurationSeconds(): Double = prefs.getFloat(KEY_DURATION_SEC, 0f).toDouble()
     fun error(): String? = prefs.getString(KEY_ERROR, null)
 
     fun saveProgressJson(json: String) {
@@ -113,6 +122,8 @@ class TranscribeSessionStore(context: Context) {
         private const val KEY_DURATION = "duration"
         private const val KEY_RESULT_SRT = "srt"
         private const val KEY_RESULT_PREVIEW = "preview"
+        private const val KEY_LANGUAGE = "language"
+        private const val KEY_DURATION_SEC = "duration_sec"
         private const val KEY_ERROR = "error"
         private const val KEY_PROGRESS = "progress"
     }
