@@ -33,11 +33,6 @@ import com.illyism.transcribe.ui.components.PrimaryButton
 import com.illyism.transcribe.ui.components.SecondaryButton
 import com.illyism.transcribe.ui.components.formatBytes
 import com.illyism.transcribe.ui.components.formatDuration
-import com.illyism.transcribe.ui.theme.Amber
-import com.illyism.transcribe.ui.theme.Bg
-import com.illyism.transcribe.ui.theme.SurfaceAlt
-import com.illyism.transcribe.ui.theme.TextSecondary
-
 @Composable
 fun SelectedScreen(
     name: String,
@@ -48,10 +43,11 @@ fun SelectedScreen(
     onChooseDifferent: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
+    val scheme = MaterialTheme.colorScheme
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Bg)
+            .background(scheme.background)
             .verticalScroll(rememberScrollState())
             .padding(24.dp)
     ) {
@@ -68,7 +64,7 @@ fun SelectedScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
-                .background(SurfaceAlt)
+                .background(scheme.surfaceVariant)
                 .padding(16.dp),
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -80,7 +76,7 @@ fun SelectedScreen(
         InfoBanner(
             text = "Full video stays on your phone. Only optimized audio chunks are uploaded.",
             icon = Icons.Outlined.Shield,
-            tint = Amber
+            tint = scheme.primary
         )
         if (!hasApiKey) {
             Spacer(modifier = Modifier.height(12.dp))
@@ -106,13 +102,14 @@ fun SelectedScreen(
 
 @Composable
 private fun StepIcon(icon: ImageVector, label: String) {
+    val scheme = MaterialTheme.colorScheme
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, contentDescription = null, tint = Amber)
+        Icon(icon, contentDescription = null, tint = scheme.primary)
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             label,
             style = MaterialTheme.typography.bodyMedium,
-            color = TextSecondary
+            color = scheme.onSurfaceVariant
         )
     }
 }

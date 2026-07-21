@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -59,7 +60,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     snackbarHost = { SnackbarHost(snackbarHostState) },
-                    containerColor = com.illyism.transcribe.ui.theme.Bg
+                    containerColor = MaterialTheme.colorScheme.background
                 ) { padding ->
                     androidx.compose.foundation.layout.Box(
                         modifier = Modifier
@@ -121,34 +122,22 @@ class MainActivity : ComponentActivity() {
                                 durationSeconds = state.durationSeconds,
                                 saveLocationLabel = viewModel.friendlySaveLocation(),
                                 onShare = {
+                                    // Share sheet — send the file to CapCut, Drive, Telegram, etc.
                                     viewModel.shareSrt()?.let {
                                         startActivity(Intent.createChooser(it, "Share SRT"))
-                                    } ?: run {
-                                        // no-op; snackbar handled elsewhere if needed
                                     }
                                 },
                                 onOpenFile = {
-                                    val intent = viewModel.openSrt()
-                                    if (intent != null) {
-                                        runCatching { startActivity(intent) }
-                                            .onFailure {
-                                                startActivity(
-                                                    Intent.createChooser(
-                                                        viewModel.shareSrt(),
-                                                        "Open with"
-                                                    )
-                                                )
-                                            }
+                                    // Open with another app (viewer/editor), not the share sheet.
+                                    val intent = viewModel.openSrt() ?: return@DoneScreen
+                                    runCatching {
+                                        startActivity(Intent.createChooser(intent, "Open SRT with"))
+                                    }.onFailure {
+                                        viewModel.showMessage("No app found to open .srt files")
                                     }
                                 },
-                                onCopyText = viewModel::copyPlainText,
+                                onCopyText = viewModel::copyText,
                                 onRename = viewModel::renameSrt,
-                                onOpenSourceVideo = {
-                                    viewModel.openSourceVideo()?.let { startActivity(it) }
-                                },
-                                onEditSave = viewModel::saveEditedTranscript,
-                                onReadSrt = viewModel::readSrtBody,
-                                onTranscribeAgain = viewModel::transcribeAgain,
                                 onAnother = viewModel::transcribeAnother,
                                 onBack = viewModel::transcribeAnother
                             )

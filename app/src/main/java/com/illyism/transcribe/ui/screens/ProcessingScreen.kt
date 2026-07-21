@@ -22,11 +22,6 @@ import com.illyism.transcribe.ui.components.ProgressBar
 import com.illyism.transcribe.ui.components.SecondaryButton
 import com.illyism.transcribe.ui.components.StepRow
 import com.illyism.transcribe.ui.components.formatBytes
-import com.illyism.transcribe.ui.theme.Amber
-import com.illyism.transcribe.ui.theme.Bg
-import com.illyism.transcribe.ui.theme.SurfaceAlt
-import com.illyism.transcribe.ui.theme.TextSecondary
-
 @Composable
 fun ProcessingScreen(
     stage: PipelineStage,
@@ -40,6 +35,7 @@ fun ProcessingScreen(
     onRetry: (() -> Unit)? = null,
     onChooseDifferent: (() -> Unit)? = null
 ) {
+    val scheme = MaterialTheme.colorScheme
     val failed = stage == PipelineStage.FAILED || error != null
     // FAILED is last in the enum — never use its ordinal to mark earlier steps done.
     val progressStage = if (stage == PipelineStage.FAILED) PipelineStage.EXTRACTING else stage
@@ -47,7 +43,7 @@ fun ProcessingScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Bg)
+            .background(scheme.background)
             .verticalScroll(rememberScrollState())
             .padding(24.dp)
     ) {
@@ -59,7 +55,7 @@ fun ProcessingScreen(
         Text(
             if (error != null) error else message.ifBlank { "Preparing…" },
             style = MaterialTheme.typography.bodyLarge,
-            color = if (error != null) MaterialTheme.colorScheme.error else TextSecondary
+            color = if (error != null) scheme.error else scheme.onSurfaceVariant
         )
         Spacer(modifier = Modifier.height(24.dp))
 
@@ -74,7 +70,7 @@ fun ProcessingScreen(
         Column(
             modifier = Modifier
                 .clip(RoundedCornerShape(16.dp))
-                .background(SurfaceAlt)
+                .background(scheme.surfaceVariant)
                 .padding(16.dp)
         ) {
             StepRow(
@@ -127,7 +123,7 @@ fun ProcessingScreen(
             InfoBanner(
                 text = "${formatBytes(videoBytes)} video → ${formatBytes(audioBytes)} audio " +
                     "(${String.format("%.1f", reduction)}% smaller before upload).",
-                tint = Amber
+                tint = scheme.primary
             )
         }
 

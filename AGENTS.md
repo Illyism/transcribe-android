@@ -56,10 +56,11 @@ Progress stages: `EXTRACTING` → `OPTIMIZING` → `CHUNKING` → `TRANSCRIBING`
 
 ## UI / design
 
-- Dark-only: background `#121212`, surface `#1A1A1A`, accent amber `#E8A838`
+- Material 3 with dynamic color (Material You) on API 31+; follows system light/dark. Amber fallback on older devices.
 - One job per screen; no dashboard clutter
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
+- Done screen is a launchpad: Share (send) vs Open (view/edit in another app) are separate intents
 
 ## Build & install
 

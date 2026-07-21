@@ -418,11 +418,15 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         val srt = runCatching { File(path).readText() }.getOrNull()
             ?: _state.value.preview
             ?: return
-        val plain = SrtBuilder.plainText(srt).ifBlank { srt }
+        copyText(SrtBuilder.plainText(srt).ifBlank { srt })
+    }
+
+    fun copyText(text: String) {
+        if (text.isBlank()) return
         val clipboard = getApplication<Application>()
             .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText("transcript", plain))
-        _state.update { it.copy(snackbar = "Transcript copied") }
+        clipboard.setPrimaryClip(ClipData.newPlainText("transcript", text))
+        _state.update { it.copy(snackbar = "Copied") }
     }
 
     fun renameSrt(newName: String) {
@@ -499,6 +503,10 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun transcribeAgain() = startTranscription()
+
+    fun showMessage(message: String) {
+        _state.update { it.copy(snackbar = message) }
+    }
 
     fun consumeSnackbar() {
         _state.update { it.copy(snackbar = null) }

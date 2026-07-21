@@ -14,7 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -32,9 +32,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
-import com.illyism.transcribe.ui.theme.Amber
-import com.illyism.transcribe.ui.theme.SurfaceAlt
-import com.illyism.transcribe.ui.theme.TextSecondary
 import java.util.Locale
 import java.util.concurrent.TimeUnit
 
@@ -46,6 +43,7 @@ fun PrimaryButton(
     enabled: Boolean = true,
     icon: ImageVector? = null
 ) {
+    val scheme = MaterialTheme.colorScheme
     Button(
         onClick = onClick,
         enabled = enabled,
@@ -54,10 +52,10 @@ fun PrimaryButton(
             .height(52.dp),
         shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
-            containerColor = Amber,
-            contentColor = Color(0xFF1A1200),
-            disabledContainerColor = Amber.copy(alpha = 0.35f),
-            disabledContentColor = Color(0xFF1A1200).copy(alpha = 0.5f)
+            containerColor = scheme.primary,
+            contentColor = scheme.onPrimary,
+            disabledContainerColor = scheme.primary.copy(alpha = 0.35f),
+            disabledContentColor = scheme.onPrimary.copy(alpha = 0.5f)
         )
     ) {
         if (icon != null) {
@@ -83,7 +81,9 @@ fun SecondaryButton(
             .fillMaxWidth()
             .height(52.dp),
         shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.onBackground)
+        colors = ButtonDefaults.outlinedButtonColors(
+            contentColor = MaterialTheme.colorScheme.onBackground
+        )
     ) {
         if (icon != null) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -96,7 +96,11 @@ fun SecondaryButton(
 @Composable
 fun LinkButton(text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
     TextButton(onClick = onClick, modifier = modifier) {
-        Text(text, color = Amber, style = MaterialTheme.typography.labelLarge)
+        Text(
+            text,
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.labelLarge
+        )
     }
 }
 
@@ -106,11 +110,12 @@ fun FileChip(
     meta: String,
     modifier: Modifier = Modifier
 ) {
+    val scheme = MaterialTheme.colorScheme
     Row(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(16.dp))
-            .background(SurfaceAlt)
+            .background(scheme.surfaceVariant)
             .padding(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -118,16 +123,16 @@ fun FileChip(
             modifier = Modifier
                 .size(48.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(Amber.copy(alpha = 0.15f)),
+                .background(scheme.primary.copy(alpha = 0.15f)),
             contentAlignment = Alignment.Center
         ) {
-            Icon(Icons.Outlined.InsertDriveFile, contentDescription = null, tint = Amber)
+            Icon(Icons.AutoMirrored.Outlined.InsertDriveFile, contentDescription = null, tint = scheme.primary)
         }
         Spacer(modifier = Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 2)
             Spacer(modifier = Modifier.height(4.dp))
-            Text(meta, style = MaterialTheme.typography.bodyMedium)
+            Text(meta, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
         }
     }
 }
@@ -137,7 +142,7 @@ fun InfoBanner(
     text: String,
     modifier: Modifier = Modifier,
     icon: ImageVector = Icons.Outlined.WarningAmber,
-    tint: Color = Amber
+    tint: Color = MaterialTheme.colorScheme.primary
 ) {
     Row(
         modifier = modifier
@@ -156,6 +161,7 @@ fun InfoBanner(
 
 @Composable
 fun ProgressBar(percent: Int, modifier: Modifier = Modifier) {
+    val scheme = MaterialTheme.colorScheme
     Column(modifier = modifier.fillMaxWidth()) {
         LinearProgressIndicator(
             progress = { (percent.coerceIn(0, 100) / 100f) },
@@ -163,12 +169,16 @@ fun ProgressBar(percent: Int, modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .height(8.dp)
                 .clip(RoundedCornerShape(8.dp)),
-            color = Amber,
-            trackColor = SurfaceAlt,
+            color = scheme.primary,
+            trackColor = scheme.surfaceVariant,
             strokeCap = StrokeCap.Round
         )
         Spacer(modifier = Modifier.height(8.dp))
-        Text("$percent%", style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+        Text(
+            "$percent%",
+            style = MaterialTheme.typography.bodyMedium,
+            color = scheme.onSurfaceVariant
+        )
     }
 }
 
@@ -201,15 +211,16 @@ fun StepRow(
     done: Boolean,
     active: Boolean
 ) {
+    val scheme = MaterialTheme.colorScheme
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.Top
     ) {
         val color = when {
-            done -> Amber
-            active -> Amber
-            else -> TextSecondary.copy(alpha = 0.5f)
+            done -> scheme.primary
+            active -> scheme.primary
+            else -> scheme.onSurfaceVariant.copy(alpha = 0.5f)
         }
         Box(
             modifier = Modifier
@@ -222,9 +233,9 @@ fun StepRow(
             Text(
                 title,
                 style = MaterialTheme.typography.titleMedium,
-                color = if (done || active) MaterialTheme.colorScheme.onBackground else TextSecondary
+                color = if (done || active) scheme.onBackground else scheme.onSurfaceVariant
             )
-            Text(subtitle, style = MaterialTheme.typography.bodyMedium)
+            Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
         }
     }
 }

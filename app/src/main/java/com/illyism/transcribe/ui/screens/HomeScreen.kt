@@ -27,23 +27,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.unit.dp
 import com.illyism.transcribe.ui.components.LinkButton
 import com.illyism.transcribe.ui.components.PrimaryButton
-import com.illyism.transcribe.ui.theme.Amber
-import com.illyism.transcribe.ui.theme.Bg
-import com.illyism.transcribe.ui.theme.Surface
-import com.illyism.transcribe.ui.theme.SurfaceAlt
-import com.illyism.transcribe.ui.theme.TextSecondary
 
 @Composable
 fun HomeScreen(
     onChooseVideo: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
+    val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    listOf(Bg, Surface, Bg)
+                    listOf(scheme.background, scheme.surface, scheme.background)
                 )
             )
     ) {
@@ -54,7 +50,11 @@ fun HomeScreen(
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Column {
-                Text("Transcribe", style = MaterialTheme.typography.displaySmall, color = Amber)
+                Text(
+                    "Transcribe",
+                    style = MaterialTheme.typography.displaySmall,
+                    color = scheme.primary
+                )
                 Spacer(modifier = Modifier.height(16.dp))
                 Text(
                     "Transcripts from videos on your phone.",
@@ -64,7 +64,7 @@ fun HomeScreen(
                 Text(
                     "Extract audio locally. No 15GB transfers.",
                     style = MaterialTheme.typography.bodyLarge,
-                    color = TextSecondary
+                    color = scheme.onSurfaceVariant
                 )
             }
 
@@ -73,7 +73,8 @@ fun HomeScreen(
             Column {
                 Text(
                     "Full video stays on your device. Only small audio chunks are uploaded.",
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = scheme.onSurfaceVariant
                 )
                 Spacer(modifier = Modifier.height(20.dp))
                 PrimaryButton("Choose video", onClick = onChooseVideo)
@@ -86,12 +87,13 @@ fun HomeScreen(
 
 @Composable
 private fun HeroIllustration() {
+    val scheme = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(220.dp)
             .clip(RoundedCornerShape(24.dp))
-            .background(SurfaceAlt),
+            .background(scheme.surfaceVariant),
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -99,22 +101,28 @@ private fun HeroIllustration() {
                 modifier = Modifier
                     .size(72.dp)
                     .clip(CircleShape)
-                    .background(Amber.copy(alpha = 0.18f)),
+                    .background(scheme.primary.copy(alpha = 0.18f)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Outlined.Mic, contentDescription = null, tint = Amber, modifier = Modifier.size(34.dp))
+                Icon(
+                    Icons.Outlined.Mic,
+                    contentDescription = null,
+                    tint = scheme.primary,
+                    modifier = Modifier.size(34.dp)
+                )
             }
             Spacer(modifier = Modifier.height(16.dp))
             Text("On-device extract", style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(6.dp))
             Text(
                 "Lock stays local · waves go to Whisper",
-                style = MaterialTheme.typography.bodyMedium
+                style = MaterialTheme.typography.bodyMedium,
+                color = scheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(14.dp))
             androidx.compose.foundation.layout.Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                Icon(Icons.Outlined.Lock, contentDescription = null, tint = Amber)
-                Icon(Icons.Outlined.CloudUpload, contentDescription = null, tint = TextSecondary)
+                Icon(Icons.Outlined.Lock, contentDescription = null, tint = scheme.primary)
+                Icon(Icons.Outlined.CloudUpload, contentDescription = null, tint = scheme.onSurfaceVariant)
             }
         }
     }

@@ -42,9 +42,6 @@ import androidx.compose.ui.unit.dp
 import com.illyism.transcribe.ui.components.LinkButton
 import com.illyism.transcribe.ui.components.PrimaryButton
 import com.illyism.transcribe.ui.components.SecondaryButton
-import com.illyism.transcribe.ui.theme.Bg
-import com.illyism.transcribe.ui.theme.TextSecondary
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
@@ -61,13 +58,14 @@ fun SettingsScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val scheme = MaterialTheme.colorScheme
     var draftKey by remember(apiKey) { mutableStateOf(apiKey) }
     var visible by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Bg)
+            .background(scheme.background)
     ) {
         TopAppBar(
             title = { Text("Settings") },
@@ -76,7 +74,7 @@ fun SettingsScreen(
                     Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
                 }
             },
-            colors = TopAppBarDefaults.topAppBarColors(containerColor = Bg)
+            colors = TopAppBarDefaults.topAppBarColors(containerColor = scheme.background)
         )
 
         Column(
@@ -108,7 +106,7 @@ fun SettingsScreen(
             Text(
                 "Encrypted and stored only on this device.",
                 style = MaterialTheme.typography.bodyMedium,
-                color = TextSecondary
+                color = scheme.onSurfaceVariant
             )
             Spacer(modifier = Modifier.height(12.dp))
             PrimaryButton("Save key", onClick = { onSaveApiKey(draftKey) })
@@ -150,7 +148,7 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
             Text("Transcription model", style = MaterialTheme.typography.bodyLarge)
-            Text(model, style = MaterialTheme.typography.bodyMedium, color = TextSecondary)
+            Text(model, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurfaceVariant)
 
             Spacer(modifier = Modifier.height(16.dp))
             Row(
