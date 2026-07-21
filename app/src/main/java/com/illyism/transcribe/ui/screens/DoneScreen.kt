@@ -50,7 +50,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.TextFieldValue
@@ -247,23 +246,11 @@ fun DoneScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CompactAction(
-                    label = "Copy text",
-                    icon = Icons.Outlined.ContentCopy,
-                    onClick = { onCopyText(plain.ifBlank { srtBody }) },
-                    modifier = Modifier.weight(1f)
-                )
-                CompactAction(
-                    label = "Rename",
-                    icon = Icons.Outlined.Edit,
-                    onClick = { showRename = true },
-                    modifier = Modifier.weight(1f)
-                )
-            }
+            SecondaryButton(
+                text = "Copy text",
+                onClick = { onCopyText(plain.ifBlank { srtBody }) },
+                icon = Icons.Outlined.ContentCopy
+            )
 
             Spacer(modifier = Modifier.height(20.dp))
 
@@ -369,30 +356,6 @@ private fun PreviewToggleChip(label: String, selected: Boolean, onClick: () -> U
             .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 6.dp)
     )
-}
-
-@Composable
-private fun CompactAction(
-    label: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        modifier = modifier
-            .height(64.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(scheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(icon, contentDescription = null, tint = scheme.onSurface, modifier = Modifier.size(18.dp))
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(label, style = MaterialTheme.typography.bodyMedium, color = scheme.onSurface)
-    }
 }
 
 @Composable
