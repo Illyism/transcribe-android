@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- Replaced Home/Files/Skills bottom navigation with a single Transcripts inbox.
+- Added durable multi-file background queueing with persisted SAF access and in-card progress.
+- Added typed job states, pipeline stages, queue-scoped errors, cancellation, and crash recovery.
+- Made transcript detail completed-only with inline Media3 playback and tap-to-seek SRT cues.
+- Added conditional batch cost confirmation and lifetime upload-avoidance estimates.
+- Moved custom skill management into Settings; skills remain contextual on transcripts.
+
+### Fixed
+- Existing drafts and interrupted jobs no longer disappear from the library.
+- Invalid-key and quota failures pause the queue instead of failing every queued file.
+- Temporary work from crashed jobs is cleaned without deleting audio retained for `WAITING_FOR_KEY`.
+
 All notable changes to **Transcribe Android** are documented here.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),

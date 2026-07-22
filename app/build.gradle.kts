@@ -94,6 +94,7 @@ dependencies {
     implementation("com.arthenica:smart-exception-java:0.2.1")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }
 
 // adaptive-navigation3 1.3.x declares AGP 9.1 / compileSdk 37; project stays on AGP 8.11 / 36.

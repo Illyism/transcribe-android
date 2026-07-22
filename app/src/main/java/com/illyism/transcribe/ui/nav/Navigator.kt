@@ -61,13 +61,13 @@ class Navigator(val state: NavigationState) {
     fun currentKey(): NavKey? =
         state.backStacks[state.topLevelRoute]?.lastOrNull()
 
-    /** New job or restore: Home → TranscriptDetail (replaces an existing detail on Home). */
+    /** Opens a completed transcript on the single History/Transcripts stack. */
     fun openTranscriptDetail(transcriptId: String) {
-        ensureTopLevel(AppKey.Home)
-        val stack = state.backStacks[AppKey.Home] ?: return
+        ensureTopLevel(AppKey.History)
+        val stack = state.backStacks[AppKey.History] ?: return
         val detail = AppKey.TranscriptDetail(transcriptId)
         while (stack.size > 1 &&
-            stack.last() !is AppKey.Home &&
+            stack.last() !is AppKey.History &&
             stack.last() !is AppKey.TranscriptDetail
         ) {
             stack.removeLastOrNull()
@@ -83,20 +83,7 @@ class Navigator(val state: NavigationState) {
      * On wide list-detail layouts, replaces an existing detail instead of stacking.
      */
     fun openHistoryDetail(transcriptId: String) {
-        ensureTopLevel(AppKey.History)
-        val stack = state.backStacks[AppKey.History] ?: return
-        val detail = AppKey.TranscriptDetail(transcriptId)
-        // Drop skill/settings overlays until History or an existing detail is on top.
-        while (stack.size > 1 &&
-            stack.last() !is AppKey.History &&
-            stack.last() !is AppKey.TranscriptDetail
-        ) {
-            stack.removeLastOrNull()
-        }
-        when (stack.lastOrNull()) {
-            is AppKey.TranscriptDetail -> stack[stack.lastIndex] = detail
-            else -> stack.add(detail)
-        }
+        openTranscriptDetail(transcriptId)
     }
 
     /**

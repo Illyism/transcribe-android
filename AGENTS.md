@@ -66,9 +66,11 @@ app/src/main/java/com/illyism/transcribe/
 - Composition-held back stacks via `rememberNavBackStack` (one per tab: Home / History / Skills).
 - Screens are addressed by ID: `TranscriptDetail(transcriptId)`, `SkillResults(transcriptId, skillId)`, `SkillEditor(skillId?)`.
 - Finished transcripts load from `HistoryStore.get(id)` — not mirrored in `UiState`.
-- Pick/share creates a draft [HistoryEntry](app/src/main/java/com/illyism/transcribe/data/HistoryStore.kt) and opens `TranscriptDetail(id)` on Home. **DoneScreen** phases: Ready (Start gated on API key) → Working (pipeline steps) → Complete (preview, skills, export). Auto-starts when API key is set.
-- On pipeline DONE, ViewModel finalizes the same draft id in HistoryStore; UI stays on `TranscriptDetail(id)` (no tab switch).
-- Draft rows are hidden from the Files list until SRT exists.
+- Pick/share creates visible queued [HistoryEntry](app/src/main/java/com/illyism/transcribe/data/HistoryStore.kt) rows in **Transcripts**. Multi-select is supported and never opens a processing screen.
+- WorkManager owns a unique durable dispatcher. It atomically claims one source file at a time; the UI only observes persisted state. Up to four chunks may upload in parallel within the active source.
+- `JobState` and `JobStage` are persisted separately. Drafts, queued work, failures, cancellations, and completed transcripts all remain visible.
+- Without an API key, the active file prepares local audio, becomes `WAITING_FOR_KEY`, and pauses the queue. Other queued sources are not extracted.
+- **DoneScreen** is completed-only: inline Media3 playback, seekable SRT cues, transcript search, contextual skills, copy, and export.
 - TranscriptDetail launches skills via AssistChips (one tap → streaming `SkillResults`); lists cached runs under **Creations**; tap → `SkillResults` (loads cache if no in-memory result).
 - `TranscribeSessionStore` holds the ephemeral active job (selected video, `activeTranscriptId`, progress/error).
 - Deep links (`MainActivity` `singleTop` + `DeepLinks.kt`): `transcribe://transcript/{id}` → History → `TranscriptDetail`; `transcribe://skill/{transcriptId}/{skillId}` → History → detail → `SkillResults` (cached result required). Missing transcript → snackbar "Transcript not found". Transcript detail copies the app-scheme URI to the clipboard (not system share — `transcribe://` only opens this app).
@@ -83,8 +85,8 @@ app/src/main/java/com/illyism/transcribe/
 4. Transcribe chunks with limited concurrency
 5. Merge segments with speed/offset correction → write `.srt` under app external files
 6. Delete temp audio/chunks in `finally`
-7. On DONE, append to `HistoryStore` so Skills can reuse the transcript
-8. Best-effort **Catalog enrich**: extract a local video thumbnail (`filesDir/thumbnails/{id}.jpg`) and run hidden built-in `builtin_catalog` via `SkillRunner` / `CatalogEnricher` (`TERRA_LIGHT`) to fill `HistoryEntry.title` (≤60) + `summary` (two lines). Failures leave filename + SRT preview as fallbacks. Catalog is not listed under Skills / Creations.
+7. On DONE, atomically complete the same `HistoryEntry`, record the compression receipt, and extract a local thumbnail
+8. Automatic AI Catalog enrichment is disabled; title/summary generation remains user-triggered
 
 Progress stages: `EXTRACTING` → `OPTIMIZING` → `CHUNKING` → `TRANSCRIBING` → `SAVING` → `DONE` / `FAILED`.
 
@@ -140,9 +142,9 @@ Transcription stays `whisper-1` (separate from Skills).
 ## UI / design
 
 - Material 3 with dynamic color (Material You) on API 31+; follows system light/dark. Amber fallback on older devices.
-- Bottom nav: **Home / Files / Skills** (per-tab back stacks; bar hidden on flow screens). Route key remains `AppKey.History`.
-- Files (History tab): client-side search by title / filename / summary / preview; rows show thumbnail (or video icon), title (fallback filename), optional filename under title, meta, and two-line summary (fallback SRT preview). Finished jobs land on Files detail (`openFinishedTranscript` → `openHistoryDetail`). Bottom nav stays visible on transcript detail. Refreshes on tab select and when the list appears.
-- One job per screen; no dashboard clutter
+- Single root: **Transcripts**. Settings is behind the gear; skill management lives in Settings; skill execution is contextual on a transcript. No bottom navigation.
+- Transcripts is the queue, issue inbox, and completed library. Search is intentionally labeled **Search files** (filename/title/summary); spoken-content search lives inside completed transcript detail.
+- Cards are 72–88dp full-width targets with restrained semantic status color, fixed progress geometry, tabular numbers, and one contextual action sheet.
 - Processing should show video → audio size savings when known
 - Gate Start when no API key; show clear permission / network / no-key states
 - Transcript detail (`DoneScreen` / `TranscriptDetail(id)`): compact media card (thumb + play badge opens Media3 dialog when `sourceUri` is set); AssistChip **Create something** row; Preview; **Creations**; Export FAB (bottom-end); pencil edits Catalog `title`

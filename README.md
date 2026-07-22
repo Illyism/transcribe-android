@@ -1,15 +1,18 @@
 # Transcribe (Android)
 
-Kotlin + Jetpack Compose app that extracts audio on-device with FFmpeg, then uploads optimized chunks to OpenAI Whisper in parallel — so 15GB+ videos never leave the phone.
+Kotlin + Jetpack Compose transcription queue. Add one or many files, leave the app,
+and return to completed searchable transcripts with synchronized playback.
+
+The full source file stays on your device. FFmpeg extracts and optimizes audio
+locally; only Whisper-sized audio chunks are sent directly to OpenAI using your key.
 
 Companion to the CLI: [`@illyism/transcribe`](https://github.com/Illyism/transcribe-cli).
 
 ## Screens
 
-1. Home — choose video / API key  
-2. Transcript detail — ready → working → finished (same screen; pick/share lands here)  
-3. Files — searchable history index  
-4. Settings — encrypted API key, chunk length, parallel uploads, raw mode  
+1. Transcripts — add files, search, monitor the queue, and open completed work
+2. Transcript — inline playback, seekable cues, search, skills, copy, and export
+3. Settings — encrypted API key, usage receipt, skill management, advanced processing
 
 ## Requirements
 
@@ -29,8 +32,9 @@ Or open this folder in Android Studio and Run.
 
 ## Notes
 
-- Video is opened via Storage Access Framework (`/proc/self/fd/…`) — not copied.  
-- Temp audio/chunks live in app cache and are deleted after the job.  
+- Media is opened through Storage Access Framework + FFmpegKit `saf:` paths — never copied in full.
+- WorkManager owns a durable sequential queue: one active source file, up to four chunk uploads.
+- Temp audio/chunks are deleted after completion, cancellation, or terminal failure. Prepared audio is retained only while waiting for a key.
 - SRT is written to app external files (`Android/data/…/files/transcripts`) and shared via FileProvider.  
 - Defaults match the CLI: ~20 min chunks, 1.2× optimize, Whisper `whisper-1`, up to 4 parallel uploads on phone.  
 - FFmpeg via `dev.ffmpegkit-maintained:ffmpeg-kit-audio`.  

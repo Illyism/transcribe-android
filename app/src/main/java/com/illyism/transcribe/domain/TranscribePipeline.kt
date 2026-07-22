@@ -17,68 +17,119 @@ class TranscribePipeline(
     private val ffmpeg: FfmpegProcessor = FfmpegProcessor(),
     private val whisper: WhisperClient = WhisperClient()
 ) {
+    sealed interface Outcome {
+        data class WaitingForKey(
+            val preparedAudioPath: String,
+            val audioBytes: Long
+        ) : Outcome
+
+        data class Completed(val result: PipelineResult) : Outcome
+    }
+
     suspend fun run(
+        jobId: String,
         videoUri: Uri,
         displayName: String,
         videoBytes: Long,
-        apiKey: String,
+        apiKey: String?,
         model: String,
         chunkMinutes: Int,
         maxParallel: Int,
         optimize: Boolean,
+        preparedAudioPath: String? = null,
+        isCancellationRequested: () -> Boolean = { false },
         onProgress: (PipelineProgress) -> Unit
-    ): PipelineResult = withContext(Dispatchers.IO) {
-        val workDir = UriMediaAccess.workDir(context)
-        workDir.deleteRecursively()
+    ): Outcome = withContext(Dispatchers.IO) {
+        val workDir = File(UriMediaAccess.workDir(context), jobId)
         workDir.mkdirs()
 
         val temps = mutableListOf<File>()
-        val inputPath = UriMediaAccess.safReadPath(context, videoUri)
+        var keepPrepared = false
 
         try {
-            onProgress(
-                PipelineProgress(
-                    stage = PipelineStage.EXTRACTING,
-                    overallPercent = 5,
-                    videoBytes = videoBytes,
-                    message = "Extracting audio…"
-                )
-            )
+            fun checkCancelled() {
+                if (isCancellationRequested()) throw JobCancelledException()
+            }
 
-            val extracted = File(workDir, "extracted_${System.currentTimeMillis()}.mp3")
-            temps += extracted
-            ffmpeg.extractAudio(inputPath, extracted)
+            var speedFactor = if (optimize) FfmpegProcessor.SPEED_FACTOR else 1.0
+            var audioFile = preparedAudioPath
+                ?.let(::File)
+                ?.takeIf { it.exists() }
 
-            var audioFile = extracted
-            var speedFactor = 1.0
-
-            if (optimize) {
+            if (audioFile == null) {
+                checkCancelled()
+                val inputPath = try {
+                    UriMediaAccess.safReadPath(context, videoUri)
+                } catch (error: Exception) {
+                    throw TranscribeException(
+                        TranscribeErrorKind.SOURCE_UNAVAILABLE,
+                        ErrorScope.JOB,
+                        "Source file unavailable. Locate it again or remove this job.",
+                        error
+                    )
+                }
                 onProgress(
                     PipelineProgress(
-                        stage = PipelineStage.OPTIMIZING,
-                        overallPercent = 20,
+                        stage = PipelineStage.EXTRACTING,
+                        overallPercent = 5,
                         videoBytes = videoBytes,
-                        audioBytes = extracted.length(),
-                        message = "Optimizing audio…"
+                        message = "Extracting audio…"
                     )
                 )
-                val optimized = File(workDir, "optimized_${System.currentTimeMillis()}.mp3")
-                temps += optimized
-                ffmpeg.optimizeSpeed(extracted, optimized)
-                audioFile = optimized
-                speedFactor = FfmpegProcessor.SPEED_FACTOR
 
-                if (audioFile.length() > FfmpegProcessor.MAX_UPLOAD_BYTES) {
-                    val duration = ffmpeg.getDurationSeconds(audioFile.absolutePath)
-                    val bitrate = FfmpegProcessor.targetBitrateForSize(duration)
-                    val ogg = File(workDir, "compressed_${System.currentTimeMillis()}.ogg")
-                    temps += ogg
-                    ffmpeg.compressToOgg(audioFile, ogg, bitrate)
-                    audioFile = ogg
+                val extracted = File(workDir, "extracted.mp3")
+                temps += extracted
+                try {
+                    ffmpeg.extractAudio(inputPath, extracted)
+                } catch (error: Exception) {
+                    throw TranscribeException(
+                        TranscribeErrorKind.UNSUPPORTED_MEDIA,
+                        ErrorScope.JOB,
+                        "Could not extract audio from this source.",
+                        error
+                    )
+                }
+                checkCancelled()
+
+                audioFile = extracted
+                speedFactor = 1.0
+
+                if (optimize) {
+                    onProgress(
+                        PipelineProgress(
+                            stage = PipelineStage.OPTIMIZING,
+                            overallPercent = 20,
+                            videoBytes = videoBytes,
+                            audioBytes = extracted.length(),
+                            message = "Optimizing audio…"
+                        )
+                    )
+                    val optimized = File(workDir, "prepared.mp3")
+                    temps += optimized
+                    ffmpeg.optimizeSpeed(extracted, optimized)
+                    audioFile = optimized
+                    speedFactor = FfmpegProcessor.SPEED_FACTOR
+
+                    if (audioFile.length() > FfmpegProcessor.MAX_UPLOAD_BYTES) {
+                        val duration = ffmpeg.getDurationSeconds(audioFile.absolutePath)
+                        val bitrate = FfmpegProcessor.targetBitrateForSize(duration)
+                        val compressed = File(workDir, "prepared.ogg")
+                        temps += compressed
+                        ffmpeg.compressToOgg(audioFile, compressed, bitrate)
+                        audioFile = compressed
+                    }
                 }
             }
 
-            val audioBytes = audioFile.length()
+            val preparedAudio = checkNotNull(audioFile)
+            val audioBytes = preparedAudio.length()
+            if (apiKey.isNullOrBlank()) {
+                keepPrepared = true
+                temps.filter { it != preparedAudio }.forEach { runCatching { it.delete() } }
+                return@withContext Outcome.WaitingForKey(preparedAudio.absolutePath, audioBytes)
+            }
+
+            checkCancelled()
             onProgress(
                 PipelineProgress(
                     stage = PipelineStage.CHUNKING,
@@ -92,7 +143,7 @@ class TranscribePipeline(
             val chunkSecondsOriginal = max(60, chunkMinutes * 60).toDouble()
             val chunkSecondsOptimized = chunkSecondsOriginal / speedFactor
             val prefix = "chunks_${System.currentTimeMillis()}"
-            val chunks = ffmpeg.splitIntoChunks(audioFile, chunkSecondsOptimized, workDir, prefix)
+            val chunks = ffmpeg.splitIntoChunks(preparedAudio, chunkSecondsOptimized, workDir, prefix)
             temps += chunks
 
             val tooLarge = chunks.firstOrNull { it.length() > FfmpegProcessor.MAX_UPLOAD_BYTES }
@@ -131,6 +182,7 @@ class TranscribePipeline(
                 chunks.mapIndexed { index, chunk ->
                     async {
                         semaphore.withPermit {
+                            checkCancelled()
                             val result = whisper.transcribe(chunk, apiKey, model)
                             synchronized(results) {
                                 results[index] = result
@@ -201,18 +253,20 @@ class TranscribePipeline(
                 )
             )
 
-            PipelineResult(
-                srtPath = outFile.absolutePath,
-                preview = SrtBuilder.preview(srt),
-                language = language,
-                durationSeconds = cursor * speedFactor,
-                videoBytes = videoBytes,
-                audioBytes = audioBytes
+            Outcome.Completed(
+                PipelineResult(
+                    srtPath = outFile.absolutePath,
+                    preview = SrtBuilder.preview(srt),
+                    language = language,
+                    durationSeconds = cursor * speedFactor,
+                    videoBytes = videoBytes,
+                    audioBytes = audioBytes
+                )
             )
         } finally {
-            temps.forEach { runCatching { if (it.exists()) it.delete() } }
-            // Keep work dir cleanup light; remove leftover chunk files
-            workDir.listFiles()?.forEach { runCatching { it.delete() } }
+            if (!keepPrepared) {
+                workDir.deleteRecursively()
+            }
         }
     }
 }

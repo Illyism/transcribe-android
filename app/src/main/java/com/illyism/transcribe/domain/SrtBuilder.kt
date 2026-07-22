@@ -1,6 +1,13 @@
 package com.illyism.transcribe.domain
 
 object SrtBuilder {
+    data class Cue(
+        val index: Int,
+        val startSeconds: Double,
+        val endSeconds: Double,
+        val text: String
+    )
+
     fun formatTime(seconds: Double): String {
         val totalMillis = (seconds * 1000).toLong().coerceAtLeast(0)
         val hours = totalMillis / 3_600_000
@@ -44,6 +51,25 @@ object SrtBuilder {
         }.joinToString(" ").replace(Regex("\\s+"), " ").trim()
     }
 
+    fun parse(srt: String): List<Cue> {
+        if (srt.isBlank()) return emptyList()
+        return srt.trim().split(Regex("\\n\\s*\\n")).mapNotNull { block ->
+            val lines = block.lines().map(String::trim).filter(String::isNotBlank)
+            val timestampIndex = lines.indexOfFirst { it.contains("-->") }
+            if (timestampIndex < 0) return@mapNotNull null
+            val match = TIMESTAMP.find(lines[timestampIndex]) ?: return@mapNotNull null
+            val index = lines.firstOrNull()?.toIntOrNull() ?: 0
+            val text = lines.drop(timestampIndex + 1).joinToString(" ").trim()
+            if (text.isBlank()) return@mapNotNull null
+            Cue(
+                index = index,
+                startSeconds = timestampSeconds(match, 1),
+                endSeconds = timestampSeconds(match, 5),
+                text = text
+            )
+        }
+    }
+
     fun segmentCount(srt: String): Int {
         if (srt.isBlank()) return 0
         return Regex("^\\d+\\s*$", RegexOption.MULTILINE).findAll(srt).count().coerceAtLeast(
@@ -53,7 +79,7 @@ object SrtBuilder {
 
     /** Duration in seconds from the last cue end time, if parseable. */
     fun durationSeconds(srt: String): Double {
-        val match = Regex("""(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})""")
+        val match = TIMESTAMP
             .findAll(srt)
             .lastOrNull()
             ?: return 0.0
@@ -63,6 +89,15 @@ object SrtBuilder {
         val endMs = match.groupValues[8].toDouble()
         return endH * 3600 + endM * 60 + endS + endMs / 1000.0
     }
+
+    private fun timestampSeconds(match: MatchResult, offset: Int): Double =
+        match.groupValues[offset].toDouble() * 3600 +
+            match.groupValues[offset + 1].toDouble() * 60 +
+            match.groupValues[offset + 2].toDouble() +
+            match.groupValues[offset + 3].toDouble() / 1000.0
+
+    private val TIMESTAMP =
+        Regex("""(\d{2}):(\d{2}):(\d{2}),(\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}),(\d{3})""")
 
     fun formatClock(seconds: Double): String {
         val total = seconds.toInt().coerceAtLeast(0)

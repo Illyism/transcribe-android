@@ -1,7 +1,17 @@
 package com.illyism.transcribe.ui.screens
 
+import android.net.Uri
+import android.provider.Settings
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,47 +19,38 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Clear
 import androidx.compose.material.icons.outlined.ClosedCaption
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.IosShare
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.SelectAll
-import androidx.compose.material.icons.outlined.Settings
-import androidx.compose.material.icons.outlined.Cloud
-import androidx.compose.material.icons.outlined.GraphicEq
-import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.WarningAmber
-import androidx.compose.material.icons.outlined.Subtitles
-import androidx.compose.ui.graphics.vector.ImageVector
-import com.illyism.transcribe.data.CachedSkillRun
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -58,50 +59,57 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
-import com.illyism.transcribe.domain.ExportFormat
-import com.illyism.transcribe.domain.PipelineStage
-import com.illyism.transcribe.domain.SrtBuilder
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import com.illyism.transcribe.data.CachedSkillRun
+import com.illyism.transcribe.domain.ExportFormat
+import com.illyism.transcribe.domain.SrtBuilder
 import com.illyism.transcribe.domain.skills.BuiltInSkills
 import com.illyism.transcribe.domain.skills.Skill
 import com.illyism.transcribe.domain.skills.SkillIcons
-import androidx.compose.runtime.Composable
-import com.illyism.transcribe.ui.components.LocalThumbnail
 import com.illyism.transcribe.ui.components.PrimaryButton
-import com.illyism.transcribe.ui.components.ProgressBar
 import com.illyism.transcribe.ui.components.SecondaryButton
 import com.illyism.transcribe.ui.components.SourceVideoPlayer
-import com.illyism.transcribe.ui.components.StepRow
-import com.illyism.transcribe.ui.components.formatBytes
-import com.illyism.transcribe.ui.components.formatDuration
-import com.illyism.transcribe.ui.TranscribeViewModel.TranscriptDetailPhase
-import com.illyism.transcribe.ui.components.InfoBanner
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 
-private enum class PreviewMode { Text, Srt }
-
-@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DoneScreen(
     srtPath: String,
@@ -123,879 +131,491 @@ fun DoneScreen(
     onAskAi: (String) -> Unit = {},
     onManageSkills: () -> Unit = {},
     onOpenSkillResult: (String) -> Unit = {},
+    onLocate: () -> Unit = {},
+    onDelete: () -> Unit = {},
     onBack: () -> Unit,
-    /** False in Files list-detail (tablet) where the list remains visible. */
     showBack: Boolean = true,
-    phase: TranscriptDetailPhase = TranscriptDetailPhase.Complete,
-    sizeBytes: Long = 0,
-    durationMs: Long = 0,
-    hasApiKey: Boolean = true,
-    stage: PipelineStage = PipelineStage.DONE,
-    percent: Int = 100,
-    chunksDone: Int = 0,
-    chunksTotal: Int = 0,
-    videoBytes: Long = 0,
-    audioBytes: Long = 0,
-    message: String = "",
-    error: String? = null,
-    onStart: () -> Unit = {},
-    onRetry: () -> Unit = {},
-    onChooseDifferent: () -> Unit = {},
-    onOpenSettings: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") phase: Any? = null,
+    @Suppress("UNUSED_PARAMETER") sizeBytes: Long = 0,
+    @Suppress("UNUSED_PARAMETER") durationMs: Long = 0,
+    @Suppress("UNUSED_PARAMETER") hasApiKey: Boolean = true,
+    @Suppress("UNUSED_PARAMETER") stage: Any? = null,
+    @Suppress("UNUSED_PARAMETER") percent: Int = 100,
+    @Suppress("UNUSED_PARAMETER") chunksDone: Int = 0,
+    @Suppress("UNUSED_PARAMETER") chunksTotal: Int = 0,
+    @Suppress("UNUSED_PARAMETER") videoBytes: Long = 0,
+    @Suppress("UNUSED_PARAMETER") audioBytes: Long = 0,
+    @Suppress("UNUSED_PARAMETER") message: String = "",
+    @Suppress("UNUSED_PARAMETER") error: String? = null,
+    @Suppress("UNUSED_PARAMETER") onStart: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onRetry: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onChooseDifferent: () -> Unit = {},
+    @Suppress("UNUSED_PARAMETER") onOpenSettings: () -> Unit = {}
 ) {
-    val scheme = MaterialTheme.colorScheme
-    val isComplete = phase == TranscriptDetailPhase.Complete
-    val file = File(srtPath)
-    val srtBody = remember(srtPath, preview) {
-        if (!isComplete) preview else runCatching { file.readText() }.getOrDefault(preview)
+    val context = LocalContext.current
+    val srt by produceState(preview, srtPath, preview) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { File(srtPath).readText() }.getOrDefault(preview)
+        }
     }
-    val plain = remember(srtBody) { SrtBuilder.plainText(srtBody) }
-    val duration = when {
-        durationMs > 0 -> durationMs / 1000.0
-        durationSeconds > 0 -> durationSeconds
-        isComplete -> SrtBuilder.durationSeconds(srtBody)
-        else -> 0.0
-    }
-    val langLabel = language
-        ?.takeIf { it.isNotBlank() && !it.equals("unknown", ignoreCase = true) }
-        ?.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
-        ?: "Unknown"
-    val previewText = srtBody.ifBlank { preview.ifBlank { "—" } }
-    val headerTitle = when (phase) {
-        TranscriptDetailPhase.Ready -> "Ready to transcribe"
-        TranscriptDetailPhase.Working -> "Working…"
-        TranscriptDetailPhase.Failed -> "Failed"
-        TranscriptDetailPhase.Complete -> title.trim().ifBlank { "Transcript ready" }
-    }
-    val headerSubtitle = when (phase) {
-        TranscriptDetailPhase.Ready -> "Start when you're ready — full video stays on your phone."
-        TranscriptDetailPhase.Working -> message.ifBlank { "Preparing…" }
-        TranscriptDetailPhase.Failed -> error.orEmpty()
-        TranscriptDetailPhase.Complete -> summary.trim().ifBlank { "Your subtitles have been saved." }
-    }
-    val videoLabel = sourceName.ifBlank { file.nameWithoutExtension.ifBlank { "Video" } }
-    val metaLine = when (phase) {
-        TranscriptDetailPhase.Complete -> listOf(
-            SrtBuilder.formatClock(duration),
-            langLabel,
-            formatBytes(if (file.exists()) file.length() else 0L)
-        ).joinToString(" · ")
-        else -> "${formatBytes(sizeBytes)} · ${formatDuration(durationMs)}"
-    }
-    val canPlay = sourceUri.isNotBlank()
-
-    var showEditTitle by remember { mutableStateOf(false) }
-    var showFull by remember { mutableStateOf(false) }
-    var selectAllOnOpen by remember { mutableStateOf(false) }
+    val cues = remember(srt) { SrtBuilder.parse(srt) }
+    val plainText = remember(srt) { SrtBuilder.plainText(srt) }
+    val displayTitle = title.ifBlank { sourceName.substringBeforeLast('.').ifBlank { "Transcript" } }
+    var query by remember { mutableStateOf("") }
+    var activeCue by remember { mutableIntStateOf(-1) }
     var showExport by remember { mutableStateOf(false) }
-    var showAskAi by remember { mutableStateOf(false) }
-    var showPlayer by remember { mutableStateOf(false) }
+    var showAsk by remember { mutableStateOf(false) }
+    var showEdit by remember { mutableStateOf(false) }
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    val highlightDuration = remember(context) {
+        val scale = runCatching {
+            Settings.Global.getFloat(
+                context.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f
+            )
+        }.getOrDefault(1f)
+        if (scale == 0f) 0 else 150
+    }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(scheme.background)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (showBack) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                } else {
-                    Spacer(modifier = Modifier.width(12.dp))
-                }
-                Text(
-                    "Transcribe",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.weight(1f)
-                )
-                if (isComplete) {
-                    IconButton(onClick = onCopyLink) {
-                        Icon(Icons.Outlined.Link, contentDescription = "Copy link")
-                    }
+    var playbackFailed by remember(sourceUri) { mutableStateOf(false) }
+    val player = remember(sourceUri) {
+        sourceUri.takeIf(String::isNotBlank)?.let {
+            ExoPlayer.Builder(context).build().apply {
+                setMediaItem(MediaItem.fromUri(Uri.parse(it)))
+                prepare()
+            }
+        }
+    }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                playbackFailed = true
+            }
+        }
+        player?.addListener(listener)
+        onDispose {
+            player?.removeListener(listener)
+            player?.release()
+        }
+    }
+    LaunchedEffect(player, cues) {
+        val activePlayer = player ?: return@LaunchedEffect
+        while (currentCoroutineContext().isActive) {
+            if (activePlayer.isPlaying) {
+                val seconds = activePlayer.currentPosition / 1000.0
+                cues.lastOrNull {
+                    seconds >= it.startSeconds && seconds < it.endSeconds
+                }?.let { cue ->
+                    if (activeCue != cue.index) activeCue = cue.index
                 }
             }
+            delay(250)
+        }
+    }
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 20.dp)
-                    .padding(bottom = 88.dp)
-            ) {
-                TranscriptMediaCard(
-                    title = headerTitle,
-                    filename = videoLabel,
-                    meta = metaLine,
-                    summary = if (isComplete && title.isNotBlank()) headerSubtitle else "",
-                    thumbnailPath = thumbnailPath,
-                    durationLabel = SrtBuilder.formatClock(duration),
-                    playable = canPlay,
-                    onPlay = { showPlayer = true },
-                    onEditTitle = if (isComplete) ({ showEditTitle = true }) else null
-                )
+    val filteredCues = remember(cues, query) {
+        if (query.isBlank()) cues else cues.filter { it.text.contains(query.trim(), true) }
+    }
 
-                Spacer(modifier = Modifier.height(12.dp))
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (showBack) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
+                }
+            }
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    headerSubtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (phase == TranscriptDetailPhase.Failed) {
-                        scheme.error
-                    } else {
-                        scheme.onSurfaceVariant
+                    displayTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    listOfNotNull(
+                        SrtBuilder.formatClock(durationSeconds),
+                        language?.takeIf { it.isNotBlank() && it != "unknown" }
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(onClick = { showEdit = true }) {
+                Icon(Icons.Outlined.Edit, contentDescription = "Edit title")
+            }
+            IconButton(onClick = onCopyLink) {
+                Icon(Icons.Outlined.Link, contentDescription = "Copy transcript link")
+            }
+            IconButton(onClick = { showDeleteDialog = true }) {
+                Icon(
+                    Icons.Outlined.Delete,
+                    contentDescription = "Delete transcript",
+                    tint = MaterialTheme.colorScheme.error
+                )
+            }
+        }
+
+        if (player != null) {
+            val audioOnly = sourceName.substringAfterLast('.', "")
+                .lowercase() in setOf("mp3", "m4a", "wav", "ogg", "flac")
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp),
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                border = BorderStroke(
+                    1.dp,
+                    MaterialTheme.colorScheme.outlineVariant
+                )
+            ) {
+                SourceVideoPlayer(
+                    sourceUri = sourceUri,
+                    thumbnailPath = thumbnailPath,
+                    externalPlayer = player,
+                    onLocateSource = onLocate,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(if (audioOnly) 88.dp else 210.dp)
+                )
+            }
+
+            val activePosition = cues.indexOfFirst { it.index == activeCue }
+            PlaybackProgress(
+                cue = cues.getOrNull(activePosition),
+                cuePosition = activePosition,
+                cueCount = cues.size,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)
+            )
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 16.dp,
+                end = 16.dp,
+                top = 2.dp,
+                bottom = 20.dp
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            item("search") {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Search in transcript") },
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) {
+                            IconButton(onClick = { query = "" }) {
+                                Icon(Icons.Outlined.Clear, contentDescription = "Clear search")
+                            }
+                        }
                     }
                 )
+            }
 
-                when (phase) {
-                    TranscriptDetailPhase.Ready -> {
-                        ReadyPhaseContent(
-                            hasApiKey = hasApiKey,
-                            onStart = onStart,
-                            onChooseDifferent = onChooseDifferent,
-                            onOpenSettings = onOpenSettings
-                        )
-                    }
-                    TranscriptDetailPhase.Working,
-                    TranscriptDetailPhase.Failed -> {
-                        JobProgressContent(
-                            stage = stage,
-                            percent = percent,
-                            chunksDone = chunksDone,
-                            chunksTotal = chunksTotal,
-                            videoBytes = videoBytes,
-                            audioBytes = audioBytes,
-                            message = message,
-                            error = error,
-                            onRetry = onRetry,
-                            onChooseDifferent = onChooseDifferent
-                        )
-                    }
-                    TranscriptDetailPhase.Complete -> {
-                        CompletePhaseContent(
-                            quickSkills = quickSkills,
-                            skillRuns = skillRuns,
-                            previewText = previewText,
-                            srtBody = srtBody,
-                            onRunSkill = onRunSkill,
-                            onAskAi = { showAskAi = true },
-                            onManageSkills = onManageSkills,
-                            onOpenSkillResult = onOpenSkillResult,
-                            onCopyText = onCopyText,
-                            onOpenPreview = {
-                                selectAllOnOpen = false
-                                showFull = true
-                            },
-                            onSelectAllPreview = {
-                                selectAllOnOpen = true
-                                showFull = true
+            if (quickSkills.isNotEmpty()) {
+                item("skills") {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        quickSkills.take(3).forEach { skill ->
+                            AssistChip(
+                                onClick = {
+                                    if (skill.id == BuiltInSkills.askAi.id) showAsk = true
+                                    else onRunSkill(skill.id)
+                                },
+                                label = { Text(skill.name) },
+                                leadingIcon = {
+                                    Icon(
+                                        SkillIcons.vector(skill.icon),
+                                        contentDescription = null,
+                                        tint = SkillIcons.color(skill.color),
+                                        modifier = Modifier.size(AssistChipDefaults.IconSize)
+                                    )
+                                }
+                            )
+                        }
+                        AssistChip(
+                            onClick = onManageSkills,
+                            label = { Text("More") },
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.AutoAwesome,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(AssistChipDefaults.IconSize)
+                                )
                             }
                         )
                     }
                 }
             }
+
+            items(filteredCues, key = { it.index }) { cue ->
+                CueRow(
+                    cue = cue,
+                    query = query,
+                    active = activeCue == cue.index,
+                    playable = player != null && !playbackFailed,
+                    highlightDurationMillis = highlightDuration,
+                    onPlay = {
+                        if (playbackFailed) {
+                            onLocate()
+                        } else {
+                            activeCue = cue.index
+                            player?.seekTo((cue.startSeconds * 1000).toLong())
+                            player?.play()
+                        }
+                    }
+                )
+            }
+
+            if (filteredCues.isEmpty()) {
+                item("empty-search") {
+                    Text(
+                        "No transcript matches “${query.trim()}”",
+                        modifier = Modifier.padding(24.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (skillRuns.isNotEmpty()) {
+                item("creations-title") {
+                    Text(
+                        "Creations",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(top = 12.dp)
+                    )
+                }
+                items(skillRuns, key = { it.skillId }) { run ->
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val pressed by interactionSource.collectIsPressedAsState()
+                    val scale by animateFloatAsState(
+                        targetValue = if (pressed) 0.96f else 1f,
+                        animationSpec = tween(120),
+                        label = "creation-press"
+                    )
+                    Surface(
+                        onClick = { onOpenSkillResult(run.skillId) },
+                        interactionSource = interactionSource,
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                scaleX = scale
+                                scaleY = scale
+                            }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 56.dp)
+                                .padding(horizontal = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Outlined.AutoAwesome,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.size(12.dp))
+                            Text(run.skillName, modifier = Modifier.weight(1f))
+                            Icon(
+                                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                                contentDescription = null
+                            )
+                        }
+                    }
+                }
+            }
         }
 
-        if (isComplete) {
-            FloatingActionButton(
-                onClick = { showExport = true },
+        Surface(tonalElevation = 3.dp) {
+            Row(
                 modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(20.dp),
-                containerColor = scheme.primaryContainer,
-                contentColor = scheme.onPrimaryContainer
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Icon(Icons.Outlined.IosShare, contentDescription = "Export")
+                SecondaryButton(
+                    text = "Copy",
+                    onClick = { onCopyText(plainText.ifBlank { srt }) },
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.ContentCopy
+                )
+                PrimaryButton(
+                    text = "Export",
+                    onClick = { showExport = true },
+                    modifier = Modifier.weight(1f),
+                    icon = Icons.Outlined.IosShare
+                )
             }
         }
-    }
-
-    if (showPlayer) {
-        VideoPlayerDialog(
-            sourceUri = sourceUri,
-            thumbnailPath = thumbnailPath,
-            title = headerTitle,
-            onDismiss = { showPlayer = false }
-        )
-    }
-
-    if (showAskAi) {
-        AskAiSheet(
-            onDismiss = { showAskAi = false },
-            onGenerate = { prompt ->
-                showAskAi = false
-                onAskAi(prompt)
-            }
-        )
-    }
-
-    if (showEditTitle) {
-        EditTitleDialog(
-            currentTitle = title.trim().ifBlank { videoLabel },
-            onDismiss = { showEditTitle = false },
-            onConfirm = {
-                onEditTitle(it)
-                showEditTitle = false
-            }
-        )
     }
 
     if (showExport) {
-        ExportFormatSheet(
+        ExportSheet(
             onDismiss = { showExport = false },
-            onCopyText = {
+            onCopy = {
                 showExport = false
-                onCopyText(plain.ifBlank { srtBody })
+                onCopyText(plainText.ifBlank { srt })
             },
-            onCopySubtitles = {
+            onSelect = {
                 showExport = false
-                onCopyText(srtBody)
-            },
-            onSelect = { format ->
-                showExport = false
-                onExport(format)
+                onExport(it)
             }
         )
     }
-
-    if (showFull) {
-        FullTranscriptSheet(
-            srtBody = srtBody,
-            plainText = plain,
-            selectAllOnOpen = selectAllOnOpen,
-            onDismiss = {
-                showFull = false
-                selectAllOnOpen = false
-            },
-            onCopy = onCopyText
+    if (showAsk) {
+        AskAiDialog(
+            onDismiss = { showAsk = false },
+            onSubmit = {
+                showAsk = false
+                onAskAi(it)
+            }
         )
     }
-}
-
-@Composable
-private fun ReadyPhaseContent(
-    hasApiKey: Boolean,
-    onStart: () -> Unit,
-    onChooseDifferent: () -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    Spacer(modifier = Modifier.height(20.dp))
-    Text("What happens next", style = MaterialTheme.typography.titleMedium)
-    Spacer(modifier = Modifier.height(12.dp))
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(scheme.surfaceVariant)
-            .padding(16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        ReadyStepIcon(Icons.Outlined.GraphicEq, "Extract\nlocally")
-        ReadyStepIcon(Icons.Outlined.Tune, "Optimize\nchunks")
-        ReadyStepIcon(Icons.Outlined.Cloud, "Transcribe\nin parallel")
-    }
-    Spacer(modifier = Modifier.height(16.dp))
-    InfoBanner(
-        text = "Full video stays on your phone. Only optimized audio chunks are uploaded.",
-        icon = Icons.Outlined.Shield,
-        tint = scheme.primary
-    )
-    if (!hasApiKey) {
-        Spacer(modifier = Modifier.height(12.dp))
-        InfoBanner(
-            text = "API key required before starting. Add it in Settings.",
-            icon = Icons.Outlined.WarningAmber
+    if (showEdit) {
+        EditTitleDialog(
+            current = displayTitle,
+            onDismiss = { showEdit = false },
+            onSave = {
+                showEdit = false
+                onEditTitle(it)
+            }
         )
     }
-    Spacer(modifier = Modifier.height(28.dp))
-    PrimaryButton(
-        text = "Start transcription",
-        onClick = onStart,
-        enabled = hasApiKey
-    )
-    Spacer(modifier = Modifier.height(10.dp))
-    SecondaryButton("Choose different video", onClick = onChooseDifferent)
-    if (!hasApiKey) {
-        Spacer(modifier = Modifier.height(8.dp))
-        SecondaryButton("Add API key", onClick = onOpenSettings)
-    }
-}
-
-@Composable
-private fun ReadyStepIcon(icon: ImageVector, label: String) {
-    val scheme = MaterialTheme.colorScheme
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, contentDescription = null, tint = scheme.primary)
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(
-            label,
-            style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun JobProgressContent(
-    stage: PipelineStage,
-    percent: Int,
-    chunksDone: Int,
-    chunksTotal: Int,
-    videoBytes: Long,
-    audioBytes: Long,
-    message: String,
-    error: String?,
-    onRetry: () -> Unit,
-    onChooseDifferent: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val failed = stage == PipelineStage.FAILED || error != null
-    val progressStage = if (stage == PipelineStage.FAILED) PipelineStage.EXTRACTING else stage
-
-    Spacer(modifier = Modifier.height(20.dp))
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(scheme.surfaceVariant)
-            .padding(16.dp)
-    ) {
-        val extractDone = progressStage.ordinal > PipelineStage.EXTRACTING.ordinal ||
-            progressStage == PipelineStage.DONE
-        val optimizeDone = progressStage.ordinal > PipelineStage.OPTIMIZING.ordinal ||
-            progressStage == PipelineStage.DONE
-        val transcribingActive = progressStage == PipelineStage.TRANSCRIBING ||
-            progressStage == PipelineStage.CHUNKING
-        val transcribeDone = progressStage == PipelineStage.SAVING ||
-            progressStage == PipelineStage.DONE
-
-        StepRow(
-            title = "Extracting audio",
-            subtitle = when {
-                failed && !extractDone -> "Failed"
-                extractDone -> "Completed"
-                else -> "In progress"
-            },
-            done = extractDone && progressStage != PipelineStage.EXTRACTING,
-            active = !failed && progressStage == PipelineStage.EXTRACTING
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        StepRow(
-            title = "Optimizing",
-            subtitle = when {
-                failed && progressStage.ordinal < PipelineStage.OPTIMIZING.ordinal -> "Waiting"
-                failed && progressStage == PipelineStage.OPTIMIZING -> "Failed"
-                progressStage.ordinal < PipelineStage.OPTIMIZING.ordinal -> "Waiting"
-                optimizeDone && progressStage != PipelineStage.OPTIMIZING -> "Completed"
-                else -> "In progress"
-            },
-            done = optimizeDone && progressStage != PipelineStage.OPTIMIZING,
-            active = !failed && progressStage == PipelineStage.OPTIMIZING
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        val chunkLabel = if (chunksTotal > 0) {
-            "Transcribing chunks ($chunksDone/$chunksTotal)"
-        } else {
-            "Transcribing chunks"
-        }
-        StepRow(
-            title = chunkLabel,
-            subtitle = when {
-                failed && (transcribingActive || progressStage.ordinal >= PipelineStage.CHUNKING.ordinal) ->
-                    "Failed"
-                failed -> "Waiting"
-                transcribeDone -> "Completed"
-                transcribingActive -> "In progress"
-                else -> "Waiting"
-            },
-            done = transcribeDone,
-            active = !failed && transcribingActive
-        )
-    }
-
-    if (videoBytes > 0 && audioBytes > 0) {
-        Spacer(modifier = Modifier.height(16.dp))
-        val reduction = ((1.0 - audioBytes.toDouble() / videoBytes.toDouble()) * 100).coerceIn(0.0, 99.9)
-        InfoBanner(
-            text = "${formatBytes(videoBytes)} video → ${formatBytes(audioBytes)} audio " +
-                "(${String.format(Locale.getDefault(), "%.1f", reduction)}% smaller before upload).",
-            tint = scheme.primary
-        )
-    }
-
-    Spacer(modifier = Modifier.height(24.dp))
-    if (failed) {
-        PrimaryButton("Retry", onClick = onRetry)
-        Spacer(modifier = Modifier.height(12.dp))
-        SecondaryButton("Choose different video", onClick = onChooseDifferent)
-    } else {
-        Text("Overall progress", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(10.dp))
-        ProgressBar(percent = percent)
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            message.ifBlank { "You can leave the app. We'll keep working in the background." },
-            style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurfaceVariant
-        )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CompletePhaseContent(
-    quickSkills: List<Skill>,
-    skillRuns: List<CachedSkillRun>,
-    previewText: String,
-    srtBody: String,
-    onRunSkill: (String) -> Unit,
-    onAskAi: () -> Unit,
-    onManageSkills: () -> Unit,
-    onOpenSkillResult: (String) -> Unit,
-    onCopyText: (String) -> Unit,
-    onOpenPreview: () -> Unit,
-    onSelectAllPreview: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    if (quickSkills.isNotEmpty()) {
-        Spacer(modifier = Modifier.height(20.dp))
-        Text("Create something", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(8.dp))
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            quickSkills.forEach { skill ->
-                val iconColor = SkillIcons.color(skill.color)
-                AssistChip(
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteDialog = false },
+            title = { Text("Delete transcript?") },
+            text = { Text("Are you sure you want to delete this transcript? This action cannot be undone.") },
+            confirmButton = {
+                TextButton(
                     onClick = {
-                        if (skill.id == BuiltInSkills.askAi.id) {
-                            onAskAi()
-                        } else {
-                            onRunSkill(skill.id)
-                        }
-                    },
-                    label = { Text(skill.name) },
-                    leadingIcon = {
-                        Icon(
-                            SkillIcons.vector(skill.icon),
-                            contentDescription = null,
-                            tint = iconColor,
-                            modifier = Modifier.size(AssistChipDefaults.IconSize)
-                        )
+                        showDeleteDialog = false
+                        onDelete()
                     }
-                )
-            }
-            AssistChip(
-                onClick = onManageSkills,
-                label = { Text("Manage skills") },
-                leadingIcon = {
-                    Icon(
-                        Icons.Outlined.Settings,
-                        contentDescription = null,
-                        modifier = Modifier.size(AssistChipDefaults.IconSize)
-                    )
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
-            )
-        }
-    }
-
-    Spacer(modifier = Modifier.height(20.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "Preview",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.weight(1f)
-        )
-        IconButton(onClick = { onCopyText(srtBody) }) {
-            Icon(
-                Icons.Outlined.ContentCopy,
-                contentDescription = "Copy SRT",
-                tint = scheme.primary
-            )
-        }
-        IconButton(onClick = onSelectAllPreview) {
-            Icon(
-                Icons.Outlined.SelectAll,
-                contentDescription = "Select all",
-                tint = scheme.primary
-            )
-        }
-    }
-    Spacer(modifier = Modifier.height(8.dp))
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 160.dp, max = 320.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(scheme.surfaceVariant)
-            .clickable(onClick = onOpenPreview)
-            .padding(16.dp)
-    ) {
-        Text(
-            text = previewText,
-            style = MaterialTheme.typography.bodyMedium,
-            color = scheme.onSurface,
-            maxLines = 18,
-            overflow = TextOverflow.Ellipsis
-        )
-    }
-
-    if (skillRuns.isNotEmpty()) {
-        Spacer(modifier = Modifier.height(20.dp))
-        Text("Creations", style = MaterialTheme.typography.titleMedium)
-        Spacer(modifier = Modifier.height(8.dp))
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .background(scheme.surfaceVariant),
-            verticalArrangement = Arrangement.spacedBy(0.dp)
-        ) {
-            skillRuns.forEachIndexed { index, run ->
-                SkillRunRow(
-                    run = run,
-                    showDivider = index < skillRuns.lastIndex,
-                    onClick = { onOpenSkillResult(run.skillId) }
-                )
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteDialog = false }) {
+                    Text("Cancel")
+                }
             }
-        }
+        )
     }
 }
 
 @Composable
-private fun TranscriptMediaCard(
-    title: String,
-    filename: String,
-    meta: String,
-    summary: String,
-    thumbnailPath: String,
-    durationLabel: String,
+private fun CueRow(
+    cue: SrtBuilder.Cue,
+    query: String,
+    active: Boolean,
     playable: Boolean,
-    onPlay: () -> Unit,
-    onEditTitle: (() -> Unit)? = null
+    highlightDurationMillis: Int,
+    onPlay: () -> Unit
 ) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val cueScale by animateFloatAsState(
+        targetValue = if (pressed && playable) 0.96f else 1f,
+        animationSpec = tween(if (pressed) highlightDurationMillis.coerceAtMost(100) else highlightDurationMillis),
+        label = "cue-press"
+    )
+    val background by animateColorAsState(
+        targetValue = if (active) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surfaceContainer
+        },
+        animationSpec = tween(highlightDurationMillis),
+        label = "cue-highlight"
+    )
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(scheme.surfaceVariant)
-            .then(
+            .graphicsLayer {
+                scaleX = cueScale
+                scaleY = cueScale
+            }
+            .clickable(
+                enabled = playable,
+                interactionSource = interactionSource,
+                indication = null,
+                onClick = onPlay
+            )
+            .semantics(mergeDescendants = true) {
                 if (playable) {
-                    Modifier.clickable(onClick = onPlay)
-                } else {
-                    Modifier
+                    role = Role.Button
+                    stateDescription = if (active) "Playing" else "Not playing"
                 }
-            )
-            .padding(12.dp),
-        verticalAlignment = Alignment.Top
+                contentDescription = buildString {
+                    append("Cue ${cue.index}, ")
+                    append(SrtBuilder.formatClock(cue.startSeconds))
+                    append(". ")
+                    append(cue.text)
+                    if (playable) append(". Play from this point")
+                }
+            },
+        shape = RoundedCornerShape(14.dp),
+        color = background,
+        border = BorderStroke(
+            if (active) 1.5.dp else 1.dp,
+            if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+        )
     ) {
-        Box(
-            modifier = Modifier
-                .width(112.dp)
-                .aspectRatio(1f)
-                .clip(RoundedCornerShape(12.dp))
-        ) {
-            LocalThumbnail(
-                path = thumbnailPath,
-                modifier = Modifier.fillMaxSize(),
-                cornerRadius = 12.dp
-            )
-            if (playable) {
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(6.dp)
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color.Black.copy(alpha = 0.72f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Icon(
-                        Icons.Outlined.PlayArrow,
-                        contentDescription = "Play",
-                        tint = Color.White,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Text(
-                        durationLabel,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White
-                    )
-                }
-            }
-        }
-        Spacer(modifier = Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Row(verticalAlignment = Alignment.Top) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.SemiBold
-                    ),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                if (onEditTitle != null) {
-                    Box(
-                        modifier = Modifier
-                            .size(32.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(scheme.surface)
-                            .clickable(onClick = onEditTitle),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            Icons.Outlined.Edit,
-                            contentDescription = "Edit title",
-                            tint = scheme.onSurfaceVariant,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                filename,
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                meta,
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            if (summary.isNotBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    summary,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = scheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun VideoPlayerDialog(
-    sourceUri: String,
-    thumbnailPath: String,
-    title: String,
-    onDismiss: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(20.dp),
-            color = scheme.surface,
-            tonalElevation = 6.dp
-        ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 4.dp, top = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f)
-                    )
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Close")
-                    }
-                }
-                SourceVideoPlayer(
-                    sourceUri = sourceUri,
-                    thumbnailPath = thumbnailPath,
-                    autoPlay = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .aspectRatio(16f / 9f)
-                        .padding(bottom = 12.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SkillRunRow(
-    run: CachedSkillRun,
-    showDivider: Boolean,
-    onClick: () -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    Column {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable(onClick = onClick)
-                .padding(horizontal = 14.dp, vertical = 14.dp),
+                .heightIn(min = 72.dp)
+                .padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.Outlined.AutoAwesome,
-                contentDescription = null,
-                tint = scheme.primary,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                "${run.skillName} · ${formatRelativeTime(run.modifiedAtMillis)}",
-                style = MaterialTheme.typography.bodyLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-            Icon(
-                Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                contentDescription = null,
-                tint = scheme.onSurfaceVariant
-            )
-        }
-        if (showDivider) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(start = 46.dp)
-                    .height(1.dp)
-                    .background(scheme.outlineVariant.copy(alpha = 0.4f))
-            )
-        }
-    }
-}
-
-private fun formatRelativeTime(millis: Long, now: Long = System.currentTimeMillis()): String {
-    val diff = (now - millis).coerceAtLeast(0L)
-    val minutes = diff / 60_000L
-    val hours = diff / 3_600_000L
-    val days = diff / 86_400_000L
-    return when {
-        minutes < 1L -> "just now"
-        minutes < 60L -> "${minutes}m ago"
-        hours < 24L -> "${hours}h ago"
-        days < 30L -> "${days}d ago"
-        else -> java.text.DateFormat.getDateInstance(java.text.DateFormat.MEDIUM)
-            .format(java.util.Date(millis))
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun ExportFormatSheet(
-    onDismiss: () -> Unit,
-    onCopyText: () -> Unit,
-    onCopySubtitles: () -> Unit,
-    onSelect: (ExportFormat) -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = scheme.surface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 28.dp)
-        ) {
-            Text(
-                "Export",
-                style = MaterialTheme.typography.titleLarge,
-                modifier = Modifier.padding(vertical = 8.dp)
-            )
-
-            Text(
-                "Copy",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = scheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                ExportGridTile(
-                    label = "Text",
-                    icon = Icons.Outlined.ContentCopy,
-                    onClick = onCopyText,
-                    modifier = Modifier.weight(1f)
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "${cue.index}   ${SrtBuilder.formatClock(cue.startSeconds)} → " +
+                        SrtBuilder.formatClock(cue.endSeconds),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontFeatureSettings = "tnum"
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                ExportGridTile(
-                    label = "Subtitles",
-                    icon = Icons.Outlined.Subtitles,
-                    onClick = onCopySubtitles,
-                    modifier = Modifier.weight(1f)
-                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(highlightQuery(cue.text, query), style = MaterialTheme.typography.bodyMedium)
             }
-
-            Spacer(modifier = Modifier.height(20.dp))
-            Text(
-                "Save & share",
-                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = scheme.onSurfaceVariant
-            )
-            Text(
-                "Downloads/Transcribe, then Share",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(10.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                ExportGridTile(
-                    label = "TXT",
-                    icon = Icons.Outlined.Description,
-                    onClick = { onSelect(ExportFormat.TXT) },
-                    modifier = Modifier.weight(1f)
-                )
-                ExportGridTile(
-                    label = "MD",
-                    icon = Icons.Outlined.Code,
-                    onClick = { onSelect(ExportFormat.MD) },
-                    modifier = Modifier.weight(1f)
-                )
-                ExportGridTile(
-                    label = "SRT",
-                    icon = Icons.Outlined.ClosedCaption,
-                    onClick = { onSelect(ExportFormat.SRT) },
-                    modifier = Modifier.weight(1f)
+            if (playable) {
+                Icon(
+                    Icons.Outlined.PlayArrow,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .padding(12.dp)
+                        .offset(x = 1.5.dp)
                 )
             }
         }
@@ -1003,273 +623,165 @@ private fun ExportFormatSheet(
 }
 
 @Composable
-private fun ExportGridTile(
-    label: String,
-    icon: ImageVector,
-    onClick: () -> Unit,
+private fun PlaybackProgress(
+    cue: SrtBuilder.Cue?,
+    cuePosition: Int,
+    cueCount: Int,
     modifier: Modifier = Modifier
 ) {
-    val scheme = MaterialTheme.colorScheme
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(scheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(vertical = 18.dp, horizontal = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = scheme.primary,
-            modifier = Modifier.size(24.dp)
-        )
-        Text(
-            label,
-            style = MaterialTheme.typography.labelLarge,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
+    val spokenStatus = if (cue == null) {
+        "Playback ready"
+    } else {
+        "Playing cue ${cuePosition + 1} of $cueCount at " +
+            SrtBuilder.formatClock(cue.startSeconds)
     }
-}
-
-@Composable
-private fun PreviewToggle(mode: PreviewMode, onModeChange: (PreviewMode) -> Unit) {
-    val scheme = MaterialTheme.colorScheme
-    Row(
-        modifier = Modifier
-            .clip(RoundedCornerShape(20.dp))
-            .background(scheme.surfaceVariant)
-            .padding(3.dp)
-    ) {
-        PreviewToggleChip("Text", mode == PreviewMode.Text) { onModeChange(PreviewMode.Text) }
-        PreviewToggleChip("SRT", mode == PreviewMode.Srt) { onModeChange(PreviewMode.Srt) }
-    }
-}
-
-@Composable
-private fun PreviewToggleChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val scheme = MaterialTheme.colorScheme
     Text(
-        label,
-        style = MaterialTheme.typography.labelLarge,
-        color = if (selected) scheme.onPrimary else scheme.onSurfaceVariant,
-        modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (selected) scheme.primary else scheme.surfaceVariant.copy(alpha = 0f))
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 6.dp)
+        text = spokenStatus,
+        style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
+        color = MaterialTheme.colorScheme.primary,
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 20.dp)
+            .semantics {
+                stateDescription = spokenStatus
+                if (cue != null) {
+                    liveRegion = LiveRegionMode.Polite
+                    progressBarRangeInfo = ProgressBarRangeInfo(
+                        current = (cuePosition + 1).toFloat(),
+                        range = 1f..cueCount.coerceAtLeast(1).toFloat(),
+                        steps = (cueCount - 2).coerceAtLeast(0)
+                    )
+                }
+            }
     )
 }
 
+@Composable
+private fun highlightQuery(text: String, query: String): AnnotatedString {
+    if (query.isBlank()) return AnnotatedString(text)
+    val start = text.indexOf(query.trim(), ignoreCase = true)
+    if (start < 0) return AnnotatedString(text)
+    return buildAnnotatedString {
+        append(text)
+        addStyle(
+            SpanStyle(
+                background = MaterialTheme.colorScheme.secondaryContainer,
+                color = MaterialTheme.colorScheme.onSecondaryContainer
+            ),
+            start,
+            start + query.trim().length
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AskAiSheet(
+private fun ExportSheet(
     onDismiss: () -> Unit,
-    onGenerate: (String) -> Unit
+    onCopy: () -> Unit,
+    onSelect: (ExportFormat) -> Unit
 ) {
-    val focusRequester = remember { FocusRequester() }
-    var prompt by remember { mutableStateOf("") }
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState
-    ) {
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = state) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 24.dp)
                 .navigationBarsPadding()
+                .padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text(
-                "Ask AI",
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold)
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                "Ask a question about this transcript.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            OutlinedTextField(
-                value = prompt,
-                onValueChange = { prompt = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(140.dp)
-                    .focusRequester(focusRequester),
-                placeholder = { Text("What were the main decisions?") }
-            )
-            Spacer(modifier = Modifier.height(16.dp))
-            PrimaryButton(
-                text = "Generate",
-                onClick = { onGenerate(prompt.trim()) },
-                enabled = prompt.isNotBlank(),
-                icon = Icons.Outlined.AutoAwesome
-            )
+            Text("Export transcript", style = MaterialTheme.typography.headlineSmall)
+            ExportAction("Copy plain text", Icons.Outlined.ContentCopy, onCopy)
+            ExportAction("Subtitles (.srt)", Icons.Outlined.ClosedCaption) {
+                onSelect(ExportFormat.SRT)
+            }
+            ExportAction("Text (.txt)", Icons.Outlined.Description) {
+                onSelect(ExportFormat.TXT)
+            }
+            ExportAction("Markdown (.md)", Icons.Outlined.Code) {
+                onSelect(ExportFormat.MD)
+            }
         }
     }
 }
 
 @Composable
-private fun EditTitleDialog(
-    currentTitle: String,
-    onDismiss: () -> Unit,
-    onConfirm: (String) -> Unit
-) {
-    val focusRequester = remember { FocusRequester() }
-    var draft by remember {
-        mutableStateOf(
-            TextFieldValue(
-                text = currentTitle,
-                selection = TextRange(0, currentTitle.length)
+private fun ExportAction(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = tween(120),
+        label = "export-press"
+    )
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            }
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 56.dp)
+                .padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(modifier = Modifier.size(12.dp))
+            Text(label)
+        }
+    }
+}
+
+@Composable
+private fun AskAiDialog(onDismiss: () -> Unit, onSubmit: (String) -> Unit) {
+    var prompt by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Ask AI") },
+        text = {
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = { prompt = it },
+                label = { Text("Question about this transcript") },
+                minLines = 3
             )
-        )
-    }
-    LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
-    }
+        },
+        confirmButton = {
+            TextButton(onClick = { onSubmit(prompt.trim()) }, enabled = prompt.isNotBlank()) {
+                Text("Ask")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
+}
+
+@Composable
+private fun EditTitleDialog(current: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var value by remember(current) { mutableStateOf(current) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit title") },
         text = {
             OutlinedTextField(
-                value = draft,
-                onValueChange = { draft = it },
-                singleLine = true,
-                modifier = Modifier.focusRequester(focusRequester)
+                value = value,
+                onValueChange = { value = it },
+                label = { Text("Transcript title") },
+                singleLine = true
             )
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(draft.text) }) {
+            TextButton(onClick = { onSave(value.trim()) }, enabled = value.isNotBlank()) {
                 Text("Save")
             }
         },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
-        }
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FullTranscriptSheet(
-    srtBody: String,
-    plainText: String,
-    selectAllOnOpen: Boolean,
-    onDismiss: () -> Unit,
-    onCopy: (String) -> Unit
-) {
-    val scheme = MaterialTheme.colorScheme
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var mode by remember { mutableStateOf(PreviewMode.Srt) }
-    val body = when (mode) {
-        PreviewMode.Text -> plainText.ifBlank { srtBody }
-        PreviewMode.Srt -> srtBody
-    }
-    val focusRequester = remember { FocusRequester() }
-    var fieldValue by remember(body, selectAllOnOpen) {
-        mutableStateOf(
-            TextFieldValue(
-                text = body,
-                selection = if (selectAllOnOpen && body.isNotEmpty()) {
-                    TextRange(0, body.length)
-                } else {
-                    TextRange.Zero
-                }
-            )
-        )
-    }
-    LaunchedEffect(selectAllOnOpen, body) {
-        if (selectAllOnOpen && body.isNotEmpty()) {
-            fieldValue = TextFieldValue(text = body, selection = TextRange(0, body.length))
-            focusRequester.requestFocus()
-        }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = sheetState,
-        containerColor = scheme.surface,
-        contentColor = scheme.onSurface
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .fillMaxHeight(0.92f)
-                .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 16.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Transcript",
-                    style = MaterialTheme.typography.titleLarge,
-                    modifier = Modifier.weight(1f)
-                )
-                PreviewToggle(
-                    mode = mode,
-                    onModeChange = { next ->
-                        mode = next
-                        val nextBody = when (next) {
-                            PreviewMode.Text -> plainText.ifBlank { srtBody }
-                            PreviewMode.Srt -> srtBody
-                        }
-                        fieldValue = TextFieldValue(text = nextBody)
-                    }
-                )
-            }
-            Spacer(modifier = Modifier.height(8.dp))
-            Text(
-                if (mode == PreviewMode.Text) "Plain text · long-press to select" else "SRT · long-press to select",
-                style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-
-            TextField(
-                value = fieldValue,
-                onValueChange = { fieldValue = it },
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
-                    .focusRequester(focusRequester),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(color = scheme.onSurface),
-                colors = TextFieldDefaults.colors(
-                    focusedContainerColor = scheme.surfaceVariant,
-                    unfocusedContainerColor = scheme.surfaceVariant,
-                    disabledContainerColor = scheme.surfaceVariant,
-                    focusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                    unfocusedIndicatorColor = androidx.compose.ui.graphics.Color.Transparent,
-                    disabledIndicatorColor = androidx.compose.ui.graphics.Color.Transparent
-                )
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                SecondaryButton(
-                    text = if (mode == PreviewMode.Text) "Copy text" else "Copy SRT",
-                    onClick = { onCopy(body) },
-                    modifier = Modifier.weight(1f),
-                    icon = Icons.Outlined.ContentCopy
-                )
-                PrimaryButton(
-                    text = "Done",
-                    onClick = onDismiss,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-    }
 }

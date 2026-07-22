@@ -40,6 +40,38 @@ class SettingsRepository(context: Context) {
         get() = prefs.getBoolean(KEY_RAW, false)
         set(value) = prefs.edit().putBoolean(KEY_RAW, value).apply()
 
+    var whisperUsdPerMinute: Double
+        get() = java.lang.Double.longBitsToDouble(
+            prefs.getLong(
+                KEY_WHISPER_PRICE,
+                java.lang.Double.doubleToRawLongBits(DEFAULT_WHISPER_USD_PER_MINUTE)
+            )
+        )
+        set(value) = prefs.edit().putLong(
+            KEY_WHISPER_PRICE,
+            java.lang.Double.doubleToRawLongBits(value.coerceAtLeast(0.0))
+        ).apply()
+
+    val totalUploadAvoidedBytes: Long
+        get() = prefs.getLong(KEY_UPLOAD_AVOIDED, 0L)
+
+    val totalPreparedAudioBytes: Long
+        get() = prefs.getLong(KEY_PREPARED_AUDIO, 0L)
+
+    val videosProcessedCount: Int
+        get() = prefs.getInt(KEY_VIDEOS_PROCESSED, 0)
+
+    @Synchronized
+    fun recordCompletedJob(sourceBytes: Long, preparedAudioBytes: Long) {
+        if (sourceBytes <= 0L || preparedAudioBytes <= 0L) return
+        val avoided = (sourceBytes - preparedAudioBytes).coerceAtLeast(0L)
+        prefs.edit()
+            .putLong(KEY_UPLOAD_AVOIDED, totalUploadAvoidedBytes + avoided)
+            .putLong(KEY_PREPARED_AUDIO, totalPreparedAudioBytes + preparedAudioBytes)
+            .putInt(KEY_VIDEOS_PROCESSED, videosProcessedCount + 1)
+            .apply()
+    }
+
     /** Skills chat model + reasoning preset. */
     var skillModelTier: SkillModelTier
         get() = SkillModelTier.fromStorage(
@@ -63,10 +95,15 @@ class SettingsRepository(context: Context) {
         private const val KEY_MODEL = "model"
         private const val KEY_RAW = "raw_mode"
         private const val KEY_SKILL_MODEL = "skill_model_tier"
+        private const val KEY_WHISPER_PRICE = "whisper_usd_per_minute"
+        private const val KEY_UPLOAD_AVOIDED = "total_upload_avoided_bytes"
+        private const val KEY_PREPARED_AUDIO = "total_prepared_audio_bytes"
+        private const val KEY_VIDEOS_PROCESSED = "videos_processed_count"
 
         const val DEFAULT_CHUNK_MINUTES = 20
         const val DEFAULT_PARALLEL = 4
         const val DEFAULT_MODEL = "whisper-1"
+        const val DEFAULT_WHISPER_USD_PER_MINUTE = 0.006
     }
 }
 

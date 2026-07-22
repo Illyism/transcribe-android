@@ -25,6 +25,8 @@ import com.illyism.transcribe.data.HistoryEntry
 import com.illyism.transcribe.data.SkillModelTier
 import com.illyism.transcribe.data.TranscribeSessionStore
 import com.illyism.transcribe.domain.ExportFormat
+import com.illyism.transcribe.domain.CostEstimator
+import com.illyism.transcribe.domain.JobState
 import com.illyism.transcribe.domain.PipelineStage
 import com.illyism.transcribe.domain.SrtBuilder
 import com.illyism.transcribe.domain.UriMediaAccess
@@ -69,7 +71,21 @@ data class UiState(
     val message: String = "",
     val error: String? = null,
     val history: List<HistoryEntry> = emptyList(),
+    val pendingFiles: List<PendingFile> = emptyList(),
+    val estimatedBatchCost: Double = 0.0,
+    val totalUploadAvoidedBytes: Long = 0L,
+    val totalPreparedAudioBytes: Long = 0L,
+    val videosProcessedCount: Int = 0,
     val snackbar: String? = null
+)
+
+data class PendingFile(
+    val uri: Uri,
+    val displayName: String,
+    val mimeType: String,
+    val sizeBytes: Long,
+    val durationMs: Long,
+    val persistablePermissionGranted: Boolean
 )
 
 class TranscribeViewModel(application: Application) : AndroidViewModel(application) {
@@ -137,7 +153,10 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                 maxParallel = app.settings.maxParallelUploads,
                 model = app.settings.model,
                 rawMode = app.settings.rawMode,
-                skillModelTier = app.settings.skillModelTier
+                skillModelTier = app.settings.skillModelTier,
+                totalUploadAvoidedBytes = app.settings.totalUploadAvoidedBytes,
+                totalPreparedAudioBytes = app.settings.totalPreparedAudioBytes,
+                videosProcessedCount = app.settings.videosProcessedCount
             )
         }
     }
@@ -145,223 +164,172 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     fun refreshHistory() {
         _state.update {
             it.copy(
-                history = app.historyStore.list().filter { entry -> !app.historyStore.isDraft(entry) }
+                history = app.historyStore.list()
             )
         }
     }
 
     private fun restoreSession() {
-        val selected = app.sessionStore.selectedVideo()
-        val error = app.sessionStore.error()
-        val progress = app.sessionStore.progress()
-        val activeId = app.sessionStore.activeTranscriptId()
-
-        when {
-            progress != null &&
-                progress.stage !in listOf(PipelineStage.IDLE.name, PipelineStage.DONE.name) &&
-                selected != null -> {
-                _state.update {
-                    it.copy(
-                        selected = selected,
-                        activeTranscriptId = activeId,
-                        stage = runCatching { PipelineStage.valueOf(progress.stage) }
-                            .getOrDefault(PipelineStage.EXTRACTING),
-                        percent = progress.overallPercent,
-                        chunksDone = progress.chunksDone,
-                        chunksTotal = progress.chunksTotal,
-                        videoBytes = progress.videoBytes,
-                        audioBytes = progress.audioBytes,
-                        message = progress.message,
-                        error = error
-                    )
-                }
-                activeId?.let { _restoreNav.tryEmit(RestoreNav.TranscriptDetail(it)) }
-            }
-            progress != null && selected == null -> {
-                app.sessionStore.clear()
-            }
-            selected != null -> {
-                _state.update {
-                    it.copy(
-                        selected = selected,
-                        activeTranscriptId = activeId,
-                        error = error
-                    )
-                }
-                activeId?.let { _restoreNav.tryEmit(RestoreNav.TranscriptDetail(it)) }
-            }
-        }
+        app.historyStore.recoverInterruptedJobs()
+        enqueueDispatcher()
     }
 
     private fun observeWork() {
         viewModelScope.launch {
             workManager.getWorkInfosForUniqueWorkFlow(TranscribeWorker.UNIQUE_WORK)
-                .collect { infos ->
-                    // Prefer active work — REPLACE can leave a stale FAILED entry that would
-                    // immediately overwrite a Retry with the previous error.
-                    val info = infos.firstOrNull {
-                        it.state == WorkInfo.State.RUNNING ||
-                            it.state == WorkInfo.State.ENQUEUED ||
-                            it.state == WorkInfo.State.BLOCKED
-                    } ?: infos.firstOrNull {
-                        it.state == WorkInfo.State.SUCCEEDED
-                    } ?: infos.firstOrNull {
-                        it.state == WorkInfo.State.FAILED
-                    } ?: return@collect
-
-                    when (info.state) {
-                        WorkInfo.State.RUNNING, WorkInfo.State.ENQUEUED, WorkInfo.State.BLOCKED -> {
-                            val percent = info.progress.getInt(
-                                TranscribeWorker.KEY_PERCENT,
-                                _state.value.percent
-                            )
-                            val stageName = info.progress.getString(TranscribeWorker.KEY_STAGE)
-                            val stage = stageName?.let {
-                                runCatching { PipelineStage.valueOf(it) }.getOrNull()
-                            } ?: _state.value.stage
-                            _state.update {
-                                it.copy(
-                                    stage = stage,
-                                    percent = percent,
-                                    chunksDone = info.progress.getInt(
-                                        TranscribeWorker.KEY_CHUNKS_DONE,
-                                        it.chunksDone
-                                    ),
-                                    chunksTotal = info.progress.getInt(
-                                        TranscribeWorker.KEY_CHUNKS_TOTAL,
-                                        it.chunksTotal
-                                    ),
-                                    videoBytes = info.progress.getLong(
-                                        TranscribeWorker.KEY_VIDEO_BYTES,
-                                        it.videoBytes
-                                    ),
-                                    audioBytes = info.progress.getLong(
-                                        TranscribeWorker.KEY_AUDIO_BYTES,
-                                        it.audioBytes
-                                    ),
-                                    message = info.progress.getString(TranscribeWorker.KEY_MESSAGE)
-                                        ?: it.message,
-                                    error = null
-                                )
-                            }
-                        }
-                        WorkInfo.State.SUCCEEDED -> {
-                            val srt = info.outputData.getString(TranscribeWorker.KEY_SRT)
-                            val preview = info.outputData.getString(TranscribeWorker.KEY_PREVIEW)
-                            val language = info.outputData.getString(TranscribeWorker.KEY_LANGUAGE)
-                            val duration = info.outputData.getFloat(
-                                TranscribeWorker.KEY_DURATION_SEC,
-                                0f
-                            ).toDouble()
-                            if (srt != null) {
-                                val selected = _state.value.selected
-                                    ?: app.sessionStore.selectedVideo()
-                                val filename = selected?.displayName
-                                    ?: File(srt).name
-                                val activeId = _state.value.activeTranscriptId
-                                    ?: app.sessionStore.activeTranscriptId()
-                                val entry = finalizeHistory(
-                                    transcriptId = activeId,
-                                    filename = filename,
-                                    srtPath = srt,
-                                    preview = preview.orEmpty(),
-                                    language = language.orEmpty(),
-                                    durationSeconds = duration,
-                                    sourceUri = selected?.uri?.toString().orEmpty()
-                                )
-                                app.sessionStore.clearProgressAndError()
-                                app.sessionStore.clearActiveTranscriptId()
-                                _state.update {
-                                    it.copy(
-                                        activeTranscriptId = null,
-                                        stage = PipelineStage.DONE,
-                                        percent = 100,
-                                        error = null
-                                    )
-                                }
-                                refreshHistory()
-                                enrichHistoryEntry(entry, selected?.uri)
-                            }
-                        }
-                        WorkInfo.State.FAILED -> {
-                            val selected = _state.value.selected ?: app.sessionStore.selectedVideo()
-                            if (selected == null) {
-                                app.sessionStore.clear()
-                                _state.update {
-                                    it.copy(
-                                        selected = null,
-                                        stage = PipelineStage.IDLE,
-                                        percent = 0,
-                                        error = null,
-                                        message = ""
-                                    )
-                                }
-                                return@collect
-                            }
-                            val err = info.outputData.getString(TranscribeWorker.KEY_ERROR)
-                                ?: app.sessionStore.error()
-                                ?: "Transcription failed"
-                            _state.update {
-                                it.copy(
-                                    selected = selected,
-                                    stage = PipelineStage.FAILED,
-                                    error = err,
-                                    message = err
-                                )
-                            }
-                        }
-                        else -> Unit
-                    }
+                .collect {
+                    refreshHistory()
+                    refreshSettings()
                 }
         }
     }
 
-    fun onVideoPicked(uri: Uri, onReady: (String) -> Unit = {}) {
+    fun prepareFiles(uris: List<Uri>) {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
-            runCatching {
+            val existingUris = app.historyStore.list().map { it.sourceUri }.toSet()
+            val pending = withContext(Dispatchers.IO) {
+                uris.distinct().mapNotNull { uri ->
+                    if (uri.toString() in existingUris) return@mapNotNull null
+                    val permission = runCatching {
+                        ctx.contentResolver.takePersistableUriPermission(
+                            uri,
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                        )
+                    }.isSuccess
+                    val meta = UriMediaAccess.readMeta(ctx, uri)
+                    PendingFile(
+                        uri = uri,
+                        displayName = meta.displayName,
+                        mimeType = ctx.contentResolver.getType(uri).orEmpty(),
+                        sizeBytes = meta.sizeBytes,
+                        durationMs = meta.durationMs,
+                        persistablePermissionGranted = permission
+                    )
+                }
+            }
+            if (pending.isEmpty()) {
+                showMessage("Those files are already in Transcripts")
+                return@launch
+            }
+            val estimate = CostEstimator.estimateAll(
+                pending.map { it.durationMs },
+                app.settings.whisperUsdPerMinute
+            )
+            _state.update {
+                it.copy(pendingFiles = pending, estimatedBatchCost = estimate)
+            }
+            val needsConfirmation = pending.size > 1 ||
+                pending.any { it.durationMs <= 0L } ||
+                estimate >= 0.25 ||
+                !app.settings.hasApiKey()
+            if (!needsConfirmation) confirmPendingFiles()
+        }
+    }
+
+    fun removePendingFile(uri: Uri) {
+        _state.update { current ->
+            val files = current.pendingFiles.filterNot { it.uri == uri }
+            current.copy(
+                pendingFiles = files,
+                estimatedBatchCost = CostEstimator.estimateAll(
+                    files.map { it.durationMs },
+                    app.settings.whisperUsdPerMinute
+                )
+            )
+        }
+    }
+
+    fun dismissPendingFiles() {
+        _state.update { it.copy(pendingFiles = emptyList(), estimatedBatchCost = 0.0) }
+    }
+
+    fun confirmPendingFiles() {
+        val files = _state.value.pendingFiles
+        if (files.isEmpty()) return
+        files.forEach { pending ->
+            app.historyStore.createDraft(
+                filename = pending.displayName,
+                sourceUri = pending.uri.toString(),
+                durationSeconds = pending.durationMs / 1000.0,
+                mimeType = pending.mimeType,
+                sourceFileSizeBytes = pending.sizeBytes,
+                persistablePermissionGranted = pending.persistablePermissionGranted
+            )
+        }
+        dismissPendingFiles()
+        refreshHistory()
+        enqueueDispatcher()
+    }
+
+    fun onVideoPicked(uri: Uri, onReady: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            val before = app.historyStore.list().map { it.id }.toSet()
+            prepareFiles(listOf(uri))
+            // Compatibility path for incoming shares: confirm immediately after metadata settles.
+            kotlinx.coroutines.delay(100)
+            if (_state.value.pendingFiles.size == 1 && app.settings.hasApiKey()) {
+                confirmPendingFiles()
+            }
+            app.historyStore.list().firstOrNull { it.id !in before }?.let { onReady(it.id) }
+        }
+    }
+
+    private fun enqueueDispatcher() {
+        val request = OneTimeWorkRequestBuilder<TranscribeWorker>()
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .build()
+        workManager.enqueueUniqueWork(
+            TranscribeWorker.UNIQUE_WORK,
+            ExistingWorkPolicy.KEEP,
+            request
+        )
+    }
+
+    fun cancelJob(id: String) {
+        app.historyStore.requestCancel(id)
+        refreshHistory()
+    }
+
+    fun retryJob(id: String) {
+        app.historyStore.update(id) {
+            it.copy(
+                jobState = JobState.QUEUED,
+                errorKind = null,
+                errorScope = null,
+                errorMessage = "",
+                stageMessage = "Queued"
+            )
+        }
+        refreshHistory()
+        enqueueDispatcher()
+    }
+
+    fun removeJob(id: String) {
+        app.historyStore.delete(id)
+        refreshHistory()
+    }
+
+    fun locateSource(id: String, uri: Uri) {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val granted = runCatching {
                 ctx.contentResolver.takePersistableUriPermission(
                     uri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION
                 )
-            }
-            val meta = UriMediaAccess.readMeta(ctx, uri)
-            clearActiveJobInternal(deleteDraft = true)
-
-            val entry = app.historyStore.createDraft(
-                filename = meta.displayName,
-                sourceUri = uri.toString(),
-                durationSeconds = meta.durationMs / 1000.0
-            )
-            val selected = TranscribeSessionStore.SelectedVideo(
-                uri, meta.displayName, meta.sizeBytes, meta.durationMs
-            )
-            app.sessionStore.saveSelected(
-                uri,
-                meta.displayName,
-                meta.sizeBytes,
-                meta.durationMs
-            )
-            app.sessionStore.saveActiveTranscriptId(entry.id)
-            _state.update {
+            }.isSuccess
+            app.historyStore.update(id) {
                 it.copy(
-                    selected = selected,
-                    activeTranscriptId = entry.id,
-                    error = null,
-                    stage = PipelineStage.IDLE,
-                    percent = 0,
-                    chunksDone = 0,
-                    chunksTotal = 0,
-                    videoBytes = meta.sizeBytes,
-                    audioBytes = 0,
-                    message = ""
+                    sourceUri = uri.toString(),
+                    persistablePermissionGranted = granted,
+                    jobState = JobState.QUEUED,
+                    errorKind = null,
+                    errorMessage = ""
                 )
             }
             refreshHistory()
-            onReady(entry.id)
-            if (app.settings.hasApiKey()) {
-                startTranscription()
-            }
+            enqueueDispatcher()
         }
     }
 
@@ -390,22 +358,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             selected.durationMs
         )
         app.sessionStore.saveActiveTranscriptId(activeId)
-        val request = OneTimeWorkRequestBuilder<TranscribeWorker>()
-            .setInputData(
-                workDataOf(
-                    TranscribeWorker.KEY_URI to selected.uri.toString(),
-                    TranscribeWorker.KEY_NAME to selected.displayName,
-                    TranscribeWorker.KEY_SIZE to selected.sizeBytes
-                )
-            )
-            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-            .build()
-
-        workManager.enqueueUniqueWork(
-            TranscribeWorker.UNIQUE_WORK,
-            ExistingWorkPolicy.REPLACE,
-            request
-        )
+        enqueueDispatcher()
 
         _state.update {
             it.copy(
@@ -566,6 +519,23 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     fun saveApiKey(value: String) {
         app.settings.apiKey = value
         refreshSettings()
+        app.historyStore.list()
+            .filter {
+                it.jobState == JobState.NEEDS_ATTENTION &&
+                    it.errorScope == com.illyism.transcribe.domain.ErrorScope.QUEUE
+            }
+            .forEach { entry ->
+                app.historyStore.update(entry.id) {
+                    it.copy(
+                        jobState = JobState.QUEUED,
+                        errorKind = null,
+                        errorScope = null,
+                        errorMessage = "",
+                        stageMessage = "Queued"
+                    )
+                }
+            }
+        enqueueDispatcher()
         _state.update { it.copy(snackbar = "API key saved") }
     }
 

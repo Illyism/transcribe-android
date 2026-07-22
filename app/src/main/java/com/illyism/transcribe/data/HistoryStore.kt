@@ -1,6 +1,11 @@
 package com.illyism.transcribe.data
 
 import android.content.Context
+import com.illyism.transcribe.domain.ErrorScope
+import com.illyism.transcribe.domain.JobStage
+import com.illyism.transcribe.domain.JobState
+import com.illyism.transcribe.domain.JobStateMachine
+import com.illyism.transcribe.domain.TranscribeErrorKind
 import com.illyism.transcribe.domain.skills.SkillOutputResult
 import com.illyism.transcribe.domain.skills.SkillOutputType
 import com.illyism.transcribe.domain.skills.SkillRunResult
@@ -24,7 +29,23 @@ data class HistoryEntry(
     /** Absolute path to a local JPEG under filesDir/thumbnails/. */
     val thumbnailPath: String = "",
     /** Persistable content Uri of the source video/audio (empty if unavailable). */
-    val sourceUri: String = ""
+    val sourceUri: String = "",
+    val mimeType: String = "",
+    val sourceFileSizeBytes: Long = 0L,
+    val uploadedAudioBytes: Long = 0L,
+    val sourceDurationMs: Long = 0L,
+    val persistablePermissionGranted: Boolean = false,
+    val jobState: JobState = JobState.COMPLETED,
+    val jobStage: JobStage? = null,
+    val percent: Int = 0,
+    val chunksDone: Int = 0,
+    val chunksTotal: Int = 0,
+    val stageMessage: String = "",
+    val errorKind: TranscribeErrorKind? = null,
+    val errorScope: ErrorScope? = null,
+    val errorMessage: String = "",
+    val tempAudioPath: String = "",
+    val queueOrder: Long = createdAt
 )
 
 /** Lightweight index row for a cached skill run on a transcript. */
@@ -58,6 +79,9 @@ class HistoryStore(context: Context) {
         filename: String,
         sourceUri: String,
         durationSeconds: Double = 0.0,
+        mimeType: String = "",
+        sourceFileSizeBytes: Long = 0L,
+        persistablePermissionGranted: Boolean = false,
         id: String = UUID.randomUUID().toString()
     ): HistoryEntry = synchronized(lock) {
         val list = loadEntries().toMutableList()
@@ -67,7 +91,12 @@ class HistoryStore(context: Context) {
             srtPath = "",
             preview = "",
             durationSeconds = durationSeconds,
-            sourceUri = sourceUri
+            sourceUri = sourceUri,
+            mimeType = mimeType,
+            sourceFileSizeBytes = sourceFileSizeBytes,
+            sourceDurationMs = (durationSeconds * 1000).toLong(),
+            persistablePermissionGranted = persistablePermissionGranted,
+            jobState = JobState.QUEUED
         )
         list.add(entry)
         persist(list)
@@ -75,7 +104,81 @@ class HistoryStore(context: Context) {
     }
 
     fun isDraft(entry: HistoryEntry): Boolean =
-        entry.srtPath.isBlank() || !File(entry.srtPath).exists()
+        entry.jobState != JobState.COMPLETED ||
+            entry.srtPath.isBlank() ||
+            !File(entry.srtPath).exists()
+
+    fun queuedCount(): Int = synchronized(lock) {
+        loadEntries().count { it.jobState == JobState.QUEUED }
+    }
+
+    /** Atomically claims one source file. Only the worker dispatcher calls this. */
+    fun claimNext(apiKeyAvailable: Boolean): HistoryEntry? = synchronized(lock) {
+        val list = loadEntries().toMutableList()
+        val candidate = list
+            .filter {
+                it.jobState == JobState.QUEUED ||
+                    (apiKeyAvailable && it.jobState == JobState.WAITING_FOR_KEY)
+            }
+            .minByOrNull { it.queueOrder }
+            ?: return null
+        val index = list.indexOfFirst { it.id == candidate.id }
+        val nextStage = if (candidate.jobState == JobState.WAITING_FOR_KEY) {
+            JobStage.PREPARING_CHUNKS
+        } else {
+            JobStage.EXTRACTING_AUDIO
+        }
+        val claimed = candidate.copy(
+            jobState = JobState.RUNNING,
+            jobStage = nextStage,
+            errorKind = null,
+            errorScope = null,
+            errorMessage = ""
+        )
+        list[index] = claimed
+        persist(list)
+        claimed
+    }
+
+    fun active(): HistoryEntry? = synchronized(lock) {
+        loadEntries().firstOrNull {
+            it.jobState in setOf(JobState.RUNNING, JobState.RETRYING, JobState.CANCELLING)
+        }
+    }
+
+    fun recoverInterruptedJobs() = synchronized(lock) {
+        val list = loadEntries().toMutableList()
+        var changed = false
+        list.indices.forEach { index ->
+            val entry = list[index]
+            if (entry.jobState in setOf(JobState.RUNNING, JobState.RETRYING, JobState.CANCELLING)) {
+                list[index] = entry.copy(
+                    jobState = if (entry.jobState == JobState.CANCELLING) {
+                        JobState.CANCELLED
+                    } else {
+                        JobState.QUEUED
+                    },
+                    jobStage = null,
+                    stageMessage = if (entry.jobState == JobState.CANCELLING) {
+                        "Cancelled"
+                    } else {
+                        "Queued after interruption"
+                    }
+                )
+                changed = true
+            }
+        }
+        if (changed) persist(list)
+    }
+
+    fun requestCancel(id: String): Boolean =
+        update(id) { entry ->
+            if (entry.jobState in setOf(JobState.QUEUED, JobState.WAITING_FOR_KEY)) {
+                entry.copy(jobState = JobState.CANCELLED, jobStage = null, stageMessage = "Cancelled")
+            } else {
+                entry.copy(jobState = JobState.CANCELLING, stageMessage = "Cancelling…")
+            }
+        } != null
 
     fun append(
         filename: String,
@@ -103,7 +206,8 @@ class HistoryStore(context: Context) {
                 createdAt = if (idx >= 0) list[idx].createdAt else System.currentTimeMillis(),
                 sourceUri = sourceUri.ifBlank {
                     if (idx >= 0) list[idx].sourceUri else ""
-                }
+                },
+                jobState = JobState.COMPLETED
             )
             if (idx >= 0) {
                 list[idx] = entry
@@ -121,6 +225,7 @@ class HistoryStore(context: Context) {
             val idx = list.indexOfFirst { it.id == id }
             if (idx < 0) return null
             val updated = transform(list[idx])
+        JobStateMachine.requireTransition(list[idx].jobState, updated.jobState)
             list[idx] = updated
             persist(list)
             updated
@@ -192,9 +297,9 @@ class HistoryStore(context: Context) {
             cachedEntries = emptyList()
             return emptyList()
         }
-        val loaded = try {
+        val loaded: List<HistoryEntry> = try {
             val arr = JSONArray(file.readText())
-            buildList {
+            buildList<HistoryEntry> {
                 for (i in 0 until arr.length()) {
                     val o = arr.getJSONObject(i)
                     add(
@@ -209,11 +314,39 @@ class HistoryStore(context: Context) {
                             title = o.optString("title"),
                             summary = o.optString("summary"),
                             thumbnailPath = o.optString("thumbnailPath"),
-                            sourceUri = o.optString("sourceUri")
+                            sourceUri = o.optString("sourceUri"),
+                            mimeType = o.optString("mimeType"),
+                            sourceFileSizeBytes = o.optLong("sourceFileSizeBytes", 0L),
+                            uploadedAudioBytes = o.optLong("uploadedAudioBytes", 0L),
+                            sourceDurationMs = o.optLong("sourceDurationMs", 0L),
+                            persistablePermissionGranted = o.optBoolean(
+                                "persistablePermissionGranted",
+                                false
+                            ),
+                            jobState = enumOrDefault(
+                                o.optString("jobState"),
+                                if (o.optString("srtPath").isNotBlank()) {
+                                    JobState.COMPLETED
+                                } else {
+                                    JobState.QUEUED
+                                }
+                            ),
+                            jobStage = enumOrNull<JobStage>(o.optString("jobStage")),
+                            percent = o.optInt("percent", 0),
+                            chunksDone = o.optInt("chunksDone", 0),
+                            chunksTotal = o.optInt("chunksTotal", 0),
+                            stageMessage = o.optString("stageMessage"),
+                            errorKind = enumOrNull<TranscribeErrorKind>(
+                                o.optString("errorKind")
+                            ),
+                            errorScope = enumOrNull<ErrorScope>(o.optString("errorScope")),
+                            errorMessage = o.optString("errorMessage"),
+                            tempAudioPath = o.optString("tempAudioPath"),
+                            queueOrder = o.optLong("queueOrder", o.optLong("createdAt", 0L))
                         )
                     )
                 }
-            }.filter { it.id.isNotBlank() && it.srtPath.isNotBlank() }
+            }.filter { it.id.isNotBlank() }
         } catch (_: Exception) {
             emptyList()
         }
@@ -238,10 +371,39 @@ class HistoryStore(context: Context) {
                     .put("summary", e.summary)
                     .put("thumbnailPath", e.thumbnailPath)
                     .put("sourceUri", e.sourceUri)
+                    .put("mimeType", e.mimeType)
+                    .put("sourceFileSizeBytes", e.sourceFileSizeBytes)
+                    .put("uploadedAudioBytes", e.uploadedAudioBytes)
+                    .put("sourceDurationMs", e.sourceDurationMs)
+                    .put("persistablePermissionGranted", e.persistablePermissionGranted)
+                    .put("jobState", e.jobState.name)
+                    .put("jobStage", e.jobStage?.name ?: "")
+                    .put("percent", e.percent)
+                    .put("chunksDone", e.chunksDone)
+                    .put("chunksTotal", e.chunksTotal)
+                    .put("stageMessage", e.stageMessage)
+                    .put("errorKind", e.errorKind?.name ?: "")
+                    .put("errorScope", e.errorScope?.name ?: "")
+                    .put("errorMessage", e.errorMessage)
+                    .put("tempAudioPath", e.tempAudioPath)
+                    .put("queueOrder", e.queueOrder)
             )
         }
-        file.writeText(arr.toString(2))
+        val temporary = File(file.parentFile, "${file.name}.tmp")
+        temporary.writeText(arr.toString(2))
+        if (!temporary.renameTo(file)) {
+            file.writeText(temporary.readText())
+            temporary.delete()
+        }
     }
+
+    private inline fun <reified T : Enum<T>> enumOrNull(value: String): T? =
+        value.takeIf { it.isNotBlank() }?.let {
+            runCatching { enumValueOf<T>(it) }.getOrNull()
+        }
+
+    private inline fun <reified T : Enum<T>> enumOrDefault(value: String, default: T): T =
+        enumOrNull<T>(value) ?: default
 
     private fun resultToJson(result: SkillRunResult): JSONObject = JSONObject().apply {
         put("skillId", result.skillId)

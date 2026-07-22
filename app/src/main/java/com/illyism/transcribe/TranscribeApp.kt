@@ -8,6 +8,7 @@ import com.illyism.transcribe.data.HistoryStore
 import com.illyism.transcribe.data.SettingsRepository
 import com.illyism.transcribe.data.SkillRepository
 import com.illyism.transcribe.data.TranscribeSessionStore
+import com.illyism.transcribe.domain.UriMediaAccess
 
 class TranscribeApp : Application() {
     lateinit var settings: SettingsRepository
@@ -25,7 +26,20 @@ class TranscribeApp : Application() {
         sessionStore = TranscribeSessionStore(this)
         skillRepository = SkillRepository(this)
         historyStore = HistoryStore(this)
+        cleanOrphanedWork()
         createNotificationChannel()
+    }
+
+    private fun cleanOrphanedWork() {
+        val retained = historyStore.list()
+            .mapNotNull { it.tempAudioPath.takeIf(String::isNotBlank) }
+            .map { java.io.File(it).parentFile?.absolutePath }
+            .toSet()
+        UriMediaAccess.workDir(this).listFiles()?.forEach { directory ->
+            if (directory.absolutePath !in retained) {
+                runCatching { directory.deleteRecursively() }
+            }
+        }
     }
 
     private fun createNotificationChannel() {

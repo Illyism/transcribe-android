@@ -20,13 +20,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.AutoAwesome
-import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -62,7 +56,6 @@ import com.illyism.transcribe.ui.nav.rememberNavigationState
 import com.illyism.transcribe.ui.nav.toEntries
 import com.illyism.transcribe.ui.screens.DoneScreen
 import com.illyism.transcribe.ui.screens.HistoryScreen
-import com.illyism.transcribe.ui.screens.HomeScreen
 import com.illyism.transcribe.ui.screens.SettingsScreen
 import com.illyism.transcribe.ui.skills.SkillEditorScreen
 import com.illyism.transcribe.ui.skills.SkillResultsScreen
@@ -95,7 +88,7 @@ class MainActivity : ComponentActivity() {
                 var pendingExportSkillId by remember { mutableStateOf<String?>(null) }
 
                 val navState = rememberNavigationState(
-                    startRoute = AppKey.Home,
+                    startRoute = AppKey.History,
                     topLevelRoutes = TOP_LEVEL_KEYS
                 )
                 val navigator = remember { Navigator(navState) }
@@ -124,13 +117,17 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val picker = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.OpenMultipleDocuments()
+                ) { uris ->
+                    if (uris.isNotEmpty()) viewModel.prepareFiles(uris)
+                }
+                var locateJobId by remember { mutableStateOf<String?>(null) }
+                val locatePicker = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.OpenDocument()
                 ) { uri ->
-                    if (uri != null) {
-                        viewModel.onVideoPicked(uri) { id ->
-                            navigator.openTranscriptDetail(id)
-                        }
-                    }
+                    val id = locateJobId
+                    locateJobId = null
+                    if (id != null && uri != null) viewModel.locateSource(id, uri)
                 }
 
                 val importSkill = rememberLauncherForActivityResult(
@@ -167,12 +164,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Snapshot reads so the bar recomposes with tab/stack changes.
                 val topLevel = navState.topLevelRoute
-                val currentKey = navState.backStacks[topLevel]?.lastOrNull()
-                // Keep app chrome on transcript detail (not a dead-end flow screen).
-                val showBottomBar = currentKey in TOP_LEVEL_KEYS ||
-                    currentKey is AppKey.TranscriptDetail
 
                 fun runSkillOnTranscript(
                     transcriptId: String,
@@ -200,15 +192,6 @@ class MainActivity : ComponentActivity() {
                 @Suppress("UNCHECKED_CAST")
                 val appEntryProvider =
                     entryProvider {
-                    entry<AppKey.Home> {
-                        HomeScreen(
-                            onChooseVideo = {
-                                picker.launch(arrayOf("video/*", "audio/*"))
-                            },
-                            onOpenSettings = { navigator.navigate(AppKey.Settings) }
-                        )
-                    }
-
                     entry<AppKey.History>(
                         metadata = ListDetailSceneStrategy.listPane(
                             detailPlaceholder = { HistoryDetailPlaceholder() }
@@ -216,6 +199,16 @@ class MainActivity : ComponentActivity() {
                     ) {
                         HistoryScreen(
                             entries = state.history,
+                            pendingFiles = state.pendingFiles,
+                            estimatedBatchCost = state.estimatedBatchCost,
+                            maxParallel = state.maxParallel,
+                            onAddFiles = {
+                                picker.launch(arrayOf("video/*", "audio/*"))
+                            },
+                            onConfirmFiles = viewModel::confirmPendingFiles,
+                            onDismissFiles = viewModel::dismissPendingFiles,
+                            onRemovePending = { viewModel.removePendingFile(it.uri) },
+                            onOpenSettings = { navigator.navigate(AppKey.Settings) },
                             onOpen = { id ->
                                 val entry = viewModel.transcript(id)
                                 if (entry == null || !File(entry.srtPath).exists()) {
@@ -224,7 +217,13 @@ class MainActivity : ComponentActivity() {
                                 }
                                 navigator.openHistoryDetail(id)
                             },
-                            onDelete = viewModel::deleteHistoryEntry,
+                            onCancel = viewModel::cancelJob,
+                            onRetry = viewModel::retryJob,
+                            onLocate = { id ->
+                                locateJobId = id
+                                locatePicker.launch(arrayOf("video/*", "audio/*"))
+                            },
+                            onDelete = viewModel::removeJob,
                             onRefresh = viewModel::refreshHistory
                         )
                     }
@@ -254,9 +253,6 @@ class MainActivity : ComponentActivity() {
                         // Hide back in History two-pane; keep it for Home / compact.
                         val showBack = !(isWideWidth && topLevel == AppKey.History)
                         val skillRuns = viewModel.listCachedSkillRuns(key.transcriptId)
-                        val phase = viewModel.detailPhase(key.transcriptId)
-                        val isActive = viewModel.isActiveJob(key.transcriptId)
-                        val selected = state.selected
                         RequireOrBack(
                             viewModel.transcript(key.transcriptId),
                             navigator::goBack
@@ -273,9 +269,9 @@ class MainActivity : ComponentActivity() {
                                 sourceUri = entry.sourceUri,
                                 quickSkills = skillsState.builtIns + skillsState.customSkills,
                                 skillRuns = skillRuns,
-                                phase = phase,
-                                sizeBytes = selected?.sizeBytes ?: 0L,
-                                durationMs = selected?.durationMs ?: (entry.durationSeconds * 1000).toLong(),
+                                phase = TranscribeViewModel.TranscriptDetailPhase.Complete,
+                                sizeBytes = entry.sourceFileSizeBytes,
+                                durationMs = entry.sourceDurationMs,
                                 hasApiKey = state.hasApiKey,
                                 stage = state.stage,
                                 percent = state.percent,
@@ -319,7 +315,7 @@ class MainActivity : ComponentActivity() {
                                 },
                                 onManageSkills = {
                                     skillsViewModel.refresh()
-                                    navigator.ensureTopLevel(AppKey.Skills)
+                                    navigator.navigate(AppKey.Skills)
                                 },
                                 onOpenSkillResult = { skillId ->
                                     skillsViewModel.loadCachedResult(key.transcriptId, skillId)
@@ -327,13 +323,15 @@ class MainActivity : ComponentActivity() {
                                         AppKey.SkillResults(key.transcriptId, skillId)
                                     )
                                 },
+                                onLocate = {
+                                    locateJobId = key.transcriptId
+                                    locatePicker.launch(arrayOf("video/*", "audio/*"))
+                                },
+                                onDelete = {
+                                    viewModel.removeJob(key.transcriptId)
+                                    navigator.goBack()
+                                },
                                 onBack = {
-                                    when {
-                                        isActive && phase == TranscribeViewModel.TranscriptDetailPhase.Working ->
-                                            viewModel.cancelActiveJob()
-                                        isActive && phase == TranscribeViewModel.TranscriptDetailPhase.Ready ->
-                                            viewModel.dismissActiveDraft()
-                                    }
                                     navigator.goBack()
                                 },
                                 showBack = showBack
@@ -355,6 +353,13 @@ class MainActivity : ComponentActivity() {
                             onMaxParallel = viewModel::setMaxParallel,
                             onRawMode = viewModel::setRawMode,
                             onSkillModelTier = viewModel::setSkillModelTier,
+                            totalUploadAvoidedBytes = state.totalUploadAvoidedBytes,
+                            totalPreparedAudioBytes = state.totalPreparedAudioBytes,
+                            videosProcessedCount = state.videosProcessedCount,
+                            onManageSkills = {
+                                skillsViewModel.refresh()
+                                navigator.navigate(AppKey.Skills)
+                            },
                             onBack = {
                                 viewModel.refreshSettings()
                                 navigator.goBack()
@@ -497,44 +502,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(),
                     snackbarHost = { SnackbarHost(snackbarHostState) },
-                    containerColor = MaterialTheme.colorScheme.background,
-                    bottomBar = {
-                        if (showBottomBar) {
-                            NavigationBar {
-                                NavigationBarItem(
-                                    selected = navState.topLevelRoute == AppKey.Home,
-                                    onClick = { navigator.navigate(AppKey.Home) },
-                                    icon = { Icon(Icons.Outlined.Home, contentDescription = "Home") },
-                                    label = { Text("Home") }
-                                )
-                                NavigationBarItem(
-                                    selected = navState.topLevelRoute == AppKey.History,
-                                    onClick = {
-                                        viewModel.refreshHistory()
-                                        navigator.navigate(AppKey.History)
-                                    },
-                                    icon = {
-                                        Icon(Icons.Outlined.Folder, contentDescription = "Files")
-                                    },
-                                    label = { Text("Files") }
-                                )
-                                NavigationBarItem(
-                                    selected = navState.topLevelRoute == AppKey.Skills,
-                                    onClick = {
-                                        skillsViewModel.refresh()
-                                        navigator.navigate(AppKey.Skills)
-                                    },
-                                    icon = {
-                                        Icon(
-                                            Icons.Outlined.AutoAwesome,
-                                            contentDescription = "Skills"
-                                        )
-                                    },
-                                    label = { Text("Skills") }
-                                )
-                            }
-                        }
-                    }
+                    containerColor = MaterialTheme.colorScheme.background
                 ) { padding ->
                     Box(
                         modifier = Modifier
@@ -545,18 +513,6 @@ class MainActivity : ComponentActivity() {
                             entries = navState.toEntries(appEntryProvider),
                             onBack = {
                                 when (val top = navigator.currentKey()) {
-                                    is AppKey.TranscriptDetail -> {
-                                        val phase = viewModel.detailPhase(top.transcriptId)
-                                        if (viewModel.isActiveJob(top.transcriptId)) {
-                                            when (phase) {
-                                                TranscribeViewModel.TranscriptDetailPhase.Working ->
-                                                    viewModel.cancelActiveJob()
-                                                TranscribeViewModel.TranscriptDetailPhase.Ready ->
-                                                    viewModel.dismissActiveDraft()
-                                                else -> Unit
-                                            }
-                                        }
-                                    }
                                     is AppKey.SkillResults -> {
                                         if (skillsState.running) skillsViewModel.cancelRun()
                                     }
@@ -614,9 +570,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun openSharedMedia(uri: Uri, navigator: Navigator) {
-        viewModel.onVideoPicked(uri) { id ->
-            navigator.openTranscriptDetail(id)
-        }
+        viewModel.prepareFiles(listOf(uri))
+        navigator.navigate(AppKey.History)
     }
 
     private fun handleDeepLink(target: DeepLinks.Target, navigator: Navigator) {

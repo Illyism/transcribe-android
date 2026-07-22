@@ -1,7 +1,11 @@
 package com.illyism.transcribe.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -38,6 +42,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import java.util.Locale
@@ -52,12 +57,24 @@ fun PrimaryButton(
     icon: ImageVector? = null
 ) {
     val scheme = MaterialTheme.colorScheme
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.96f else 1f,
+        animationSpec = tween(120),
+        label = "primary-button-press"
+    )
     Button(
         onClick = onClick,
         enabled = enabled,
+        interactionSource = interactionSource,
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp),
+            .height(52.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
         shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = scheme.primary,
@@ -82,12 +99,24 @@ fun SecondaryButton(
     enabled: Boolean = true,
     icon: ImageVector? = null
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed && enabled) 0.96f else 1f,
+        animationSpec = tween(120),
+        label = "secondary-button-press"
+    )
     OutlinedButton(
         onClick = onClick,
         enabled = enabled,
+        interactionSource = interactionSource,
         modifier = modifier
             .fillMaxWidth()
-            .height(52.dp),
+            .height(52.dp)
+            .graphicsLayer {
+                scaleX = scale
+                scaleY = scale
+            },
         shape = RoundedCornerShape(14.dp),
         colors = ButtonDefaults.outlinedButtonColors(
             contentColor = MaterialTheme.colorScheme.onBackground
