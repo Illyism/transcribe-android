@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.UUID
 
 /**
  * Active-job + settings + history list. Navigation lives in Composition (Nav3);
@@ -51,6 +52,7 @@ import java.io.File
  */
 data class UiState(
     val selected: TranscribeSessionStore.SelectedVideo? = null,
+    val activeTranscriptId: String? = null,
     val hasApiKey: Boolean = false,
     val apiKey: String = "",
     val chunkMinutes: Int = 20,
@@ -78,20 +80,16 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    /** Emitted when a transcription finishes and is appended to HistoryStore. */
-    private val _finishedTranscriptId = MutableSharedFlow<String>(extraBufferCapacity = 1)
-    val finishedTranscriptId: SharedFlow<String> = _finishedTranscriptId.asSharedFlow()
-
-    /**
-     * One-shot restore hints for cold start when Nav3 has not yet restored a stack
-     * that matches the active job (e.g. first launch after process death with progress).
-     */
+    /** One-shot restore hint when Nav3 has not yet restored a stack for the active job. */
     private val _restoreNav = MutableSharedFlow<RestoreNav>(extraBufferCapacity = 1)
     val restoreNav: SharedFlow<RestoreNav> = _restoreNav.asSharedFlow()
 
     sealed interface RestoreNav {
-        data object Selected : RestoreNav
-        data object Processing : RestoreNav
+        data class TranscriptDetail(val transcriptId: String) : RestoreNav
+    }
+
+    enum class TranscriptDetailPhase {
+        Ready, Working, Failed, Complete
     }
 
     init {
@@ -102,6 +100,30 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun transcript(id: String): HistoryEntry? = app.historyStore.get(id)
+
+    fun isActiveJob(transcriptId: String): Boolean {
+        val activeId = _state.value.activeTranscriptId ?: app.sessionStore.activeTranscriptId()
+        return activeId == transcriptId && (
+            _state.value.selected != null || app.sessionStore.selectedVideo() != null
+            )
+    }
+
+    fun detailPhase(transcriptId: String): TranscriptDetailPhase {
+        val entry = transcript(transcriptId) ?: return TranscriptDetailPhase.Complete
+        if (!isActiveJob(transcriptId)) {
+            return if (app.historyStore.isDraft(entry)) {
+                TranscriptDetailPhase.Ready
+            } else {
+                TranscriptDetailPhase.Complete
+            }
+        }
+        return when (_state.value.stage) {
+            PipelineStage.IDLE -> TranscriptDetailPhase.Ready
+            PipelineStage.FAILED -> TranscriptDetailPhase.Failed
+            PipelineStage.DONE -> TranscriptDetailPhase.Complete
+            else -> TranscriptDetailPhase.Working
+        }
+    }
 
     fun listCachedSkillRuns(transcriptId: String): List<CachedSkillRun> =
         app.historyStore.listCachedSkillRuns(transcriptId)
@@ -121,13 +143,18 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun refreshHistory() {
-        _state.update { it.copy(history = app.historyStore.list()) }
+        _state.update {
+            it.copy(
+                history = app.historyStore.list().filter { entry -> !app.historyStore.isDraft(entry) }
+            )
+        }
     }
 
     private fun restoreSession() {
         val selected = app.sessionStore.selectedVideo()
         val error = app.sessionStore.error()
         val progress = app.sessionStore.progress()
+        val activeId = app.sessionStore.activeTranscriptId()
 
         when {
             progress != null &&
@@ -136,6 +163,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                 _state.update {
                     it.copy(
                         selected = selected,
+                        activeTranscriptId = activeId,
                         stage = runCatching { PipelineStage.valueOf(progress.stage) }
                             .getOrDefault(PipelineStage.EXTRACTING),
                         percent = progress.overallPercent,
@@ -147,14 +175,20 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                         error = error
                     )
                 }
-                _restoreNav.tryEmit(RestoreNav.Processing)
+                activeId?.let { _restoreNav.tryEmit(RestoreNav.TranscriptDetail(it)) }
             }
             progress != null && selected == null -> {
                 app.sessionStore.clear()
             }
             selected != null -> {
-                _state.update { it.copy(selected = selected) }
-                _restoreNav.tryEmit(RestoreNav.Selected)
+                _state.update {
+                    it.copy(
+                        selected = selected,
+                        activeTranscriptId = activeId,
+                        error = error
+                    )
+                }
+                activeId?.let { _restoreNav.tryEmit(RestoreNav.TranscriptDetail(it)) }
             }
         }
     }
@@ -224,7 +258,10 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                     ?: app.sessionStore.selectedVideo()
                                 val filename = selected?.displayName
                                     ?: File(srt).name
-                                val entry = appendToHistory(
+                                val activeId = _state.value.activeTranscriptId
+                                    ?: app.sessionStore.activeTranscriptId()
+                                val entry = finalizeHistory(
+                                    transcriptId = activeId,
                                     filename = filename,
                                     srtPath = srt,
                                     preview = preview.orEmpty(),
@@ -232,15 +269,17 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                                     durationSeconds = duration,
                                     sourceUri = selected?.uri?.toString().orEmpty()
                                 )
+                                app.sessionStore.clearProgressAndError()
+                                app.sessionStore.clearActiveTranscriptId()
                                 _state.update {
                                     it.copy(
+                                        activeTranscriptId = null,
                                         stage = PipelineStage.DONE,
                                         percent = 100,
                                         error = null
                                     )
                                 }
                                 refreshHistory()
-                                _finishedTranscriptId.emit(entry.id)
                                 enrichHistoryEntry(entry, selected?.uri)
                             }
                         }
@@ -277,7 +316,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
-    fun onVideoPicked(uri: Uri) {
+    fun onVideoPicked(uri: Uri, onReady: (String) -> Unit = {}) {
         viewModelScope.launch {
             val ctx = getApplication<Application>()
             runCatching {
@@ -287,23 +326,49 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
                 )
             }
             val meta = UriMediaAccess.readMeta(ctx, uri)
-            app.sessionStore.saveSelected(uri, meta.displayName, meta.sizeBytes, meta.durationMs)
+            clearActiveJobInternal(deleteDraft = true)
+
+            val entry = app.historyStore.createDraft(
+                filename = meta.displayName,
+                sourceUri = uri.toString(),
+                durationSeconds = meta.durationMs / 1000.0
+            )
+            val selected = TranscribeSessionStore.SelectedVideo(
+                uri, meta.displayName, meta.sizeBytes, meta.durationMs
+            )
+            app.sessionStore.saveSelected(
+                uri,
+                meta.displayName,
+                meta.sizeBytes,
+                meta.durationMs
+            )
+            app.sessionStore.saveActiveTranscriptId(entry.id)
             _state.update {
                 it.copy(
-                    selected = TranscribeSessionStore.SelectedVideo(
-                        uri, meta.displayName, meta.sizeBytes, meta.durationMs
-                    ),
+                    selected = selected,
+                    activeTranscriptId = entry.id,
                     error = null,
                     stage = PipelineStage.IDLE,
-                    percent = 0
+                    percent = 0,
+                    chunksDone = 0,
+                    chunksTotal = 0,
+                    videoBytes = meta.sizeBytes,
+                    audioBytes = 0,
+                    message = ""
                 )
+            }
+            refreshHistory()
+            onReady(entry.id)
+            if (app.settings.hasApiKey()) {
+                startTranscription()
             }
         }
     }
 
     fun startTranscription(): Boolean {
         val selected = _state.value.selected ?: app.sessionStore.selectedVideo()
-        if (selected == null) {
+        val activeId = _state.value.activeTranscriptId ?: app.sessionStore.activeTranscriptId()
+        if (selected == null || activeId.isNullOrBlank()) {
             _state.update {
                 it.copy(
                     stage = PipelineStage.IDLE,
@@ -324,6 +389,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
             selected.sizeBytes,
             selected.durationMs
         )
+        app.sessionStore.saveActiveTranscriptId(activeId)
         val request = OneTimeWorkRequestBuilder<TranscribeWorker>()
             .setInputData(
                 workDataOf(
@@ -344,6 +410,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         _state.update {
             it.copy(
                 selected = selected,
+                activeTranscriptId = activeId,
                 stage = PipelineStage.EXTRACTING,
                 percent = 1,
                 message = "Starting…",
@@ -357,7 +424,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         return true
     }
 
-    /** Cancel in-flight work when leaving the Processing screen. */
+    /** Cancel in-flight work when leaving the active detail during transcription. */
     fun cancelActiveJob() {
         workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
         app.sessionStore.clearProgressAndError()
@@ -371,13 +438,42 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         }
     }
 
+    /** Remove draft + session when backing out before start or choosing a different file. */
+    fun dismissActiveDraft() {
+        clearActiveJobInternal(deleteDraft = true)
+        refreshHistory()
+    }
+
+    private fun clearActiveJobInternal(deleteDraft: Boolean) {
+        workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
+        workManager.pruneWork()
+        val activeId = _state.value.activeTranscriptId ?: app.sessionStore.activeTranscriptId()
+        if (deleteDraft && !activeId.isNullOrBlank()) {
+            app.historyStore.delete(activeId)
+        }
+        app.sessionStore.clear()
+        _state.update {
+            it.copy(
+                selected = null,
+                activeTranscriptId = null,
+                stage = PipelineStage.IDLE,
+                percent = 0,
+                message = "",
+                chunksDone = 0,
+                chunksTotal = 0,
+                error = null
+            )
+        }
+    }
+
     fun deleteHistoryEntry(id: String) {
         app.historyStore.delete(id)
         refreshHistory()
         _state.update { it.copy(snackbar = "Removed from history") }
     }
 
-    private fun appendToHistory(
+    private fun finalizeHistory(
+        transcriptId: String?,
         filename: String,
         srtPath: String,
         preview: String,
@@ -385,14 +481,29 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
         durationSeconds: Double,
         sourceUri: String = ""
     ): HistoryEntry {
+        val cleanName = filename.removeSuffix(".srt").removeSuffix(".SRT")
+            .ifBlank { File(srtPath).nameWithoutExtension }
+        if (!transcriptId.isNullOrBlank()) {
+            val updated = app.historyStore.update(transcriptId) { draft ->
+                draft.copy(
+                    filename = cleanName,
+                    srtPath = srtPath,
+                    preview = preview.take(400),
+                    language = language,
+                    durationSeconds = durationSeconds,
+                    sourceUri = sourceUri.ifBlank { draft.sourceUri }
+                )
+            }
+            if (updated != null) return updated
+        }
         return app.historyStore.append(
-            filename = filename.removeSuffix(".srt").removeSuffix(".SRT")
-                .ifBlank { File(srtPath).nameWithoutExtension },
+            filename = cleanName,
             srtPath = srtPath,
             preview = preview,
             language = language,
             durationSeconds = durationSeconds,
-            sourceUri = sourceUri
+            sourceUri = sourceUri,
+            id = transcriptId ?: UUID.randomUUID().toString()
         )
     }
 
@@ -449,20 +560,7 @@ class TranscribeViewModel(application: Application) : AndroidViewModel(applicati
     }
 
     fun chooseDifferent() {
-        workManager.cancelUniqueWork(TranscribeWorker.UNIQUE_WORK)
-        workManager.pruneWork()
-        app.sessionStore.clear()
-        _state.update {
-            it.copy(
-                selected = null,
-                stage = PipelineStage.IDLE,
-                percent = 0,
-                message = "",
-                chunksDone = 0,
-                chunksTotal = 0,
-                error = null
-            )
-        }
+        dismissActiveDraft()
     }
 
     fun saveApiKey(value: String) {

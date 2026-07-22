@@ -7,10 +7,9 @@ Companion to the CLI: [`@illyism/transcribe`](https://github.com/Illyism/transcr
 ## Screens
 
 1. Home — choose video / API key  
-2. Selected — confirm file + start (gated on API key)  
-3. Processing — extract → optimize → parallel chunks (foreground WorkManager)  
-4. Done — share/copy SRT  
-5. Settings — encrypted API key, chunk length, parallel uploads, raw mode  
+2. Transcript detail — ready → working → finished (same screen; pick/share lands here)  
+3. Files — searchable history index  
+4. Settings — encrypted API key, chunk length, parallel uploads, raw mode  
 
 ## Requirements
 

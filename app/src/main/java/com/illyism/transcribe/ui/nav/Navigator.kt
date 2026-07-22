@@ -61,31 +61,21 @@ class Navigator(val state: NavigationState) {
     fun currentKey(): NavKey? =
         state.backStacks[state.topLevelRoute]?.lastOrNull()
 
-    /** Home-tab flow: Selected (skip if already mid-job / on a transcript). */
-    fun openSelected() {
+    /** New job or restore: Home → TranscriptDetail (replaces an existing detail on Home). */
+    fun openTranscriptDetail(transcriptId: String) {
         ensureTopLevel(AppKey.Home)
-        val top = currentKey()
-        if (top !is AppKey.Selected &&
-            top !is AppKey.Processing &&
-            top !is AppKey.TranscriptDetail
+        val stack = state.backStacks[AppKey.Home] ?: return
+        val detail = AppKey.TranscriptDetail(transcriptId)
+        while (stack.size > 1 &&
+            stack.last() !is AppKey.Home &&
+            stack.last() !is AppKey.TranscriptDetail
         ) {
-            navigate(AppKey.Selected)
+            stack.removeLastOrNull()
         }
-    }
-
-    /** Home-tab flow: Processing (replace Selected when present). */
-    fun openProcessing() {
-        ensureTopLevel(AppKey.Home)
-        when (currentKey()) {
-            is AppKey.Processing -> Unit
-            is AppKey.Selected -> replaceTop(AppKey.Processing)
-            else -> navigate(AppKey.Processing)
+        when (stack.lastOrNull()) {
+            is AppKey.TranscriptDetail -> stack[stack.lastIndex] = detail
+            else -> stack.add(detail)
         }
-    }
-
-    /** Finished job → Files tab detail so the library chrome stays visible. */
-    fun openFinishedTranscript(id: String) {
-        openHistoryDetail(id)
     }
 
     /**

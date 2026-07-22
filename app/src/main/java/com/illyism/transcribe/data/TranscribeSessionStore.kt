@@ -28,6 +28,16 @@ class TranscribeSessionStore(context: Context) {
             .apply()
     }
 
+    fun saveActiveTranscriptId(id: String) {
+        prefs.edit().putString(KEY_ACTIVE_TRANSCRIPT_ID, id).apply()
+    }
+
+    fun clearActiveTranscriptId() {
+        prefs.edit().remove(KEY_ACTIVE_TRANSCRIPT_ID).apply()
+    }
+
+    fun activeTranscriptId(): String? = prefs.getString(KEY_ACTIVE_TRANSCRIPT_ID, null)
+
     fun saveError(message: String) {
         prefs.edit().putString(KEY_ERROR, message).apply()
     }
@@ -101,5 +111,6 @@ class TranscribeSessionStore(context: Context) {
         private const val KEY_DURATION = "duration"
         private const val KEY_ERROR = "error"
         private const val KEY_PROGRESS = "progress"
+        private const val KEY_ACTIVE_TRANSCRIPT_ID = "active_transcript_id"
     }
 }

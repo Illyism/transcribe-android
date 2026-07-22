@@ -30,7 +30,7 @@ app/src/main/java/com/illyism/transcribe/
   TranscribeApp.kt             # Application, singletons, notification channel
   data/
     SettingsRepository.kt      # Encrypted prefs (API key, chunk, parallel, raw, skillModelTier)
-    TranscribeSessionStore.kt  # Active job only (selected + progress/error)
+    TranscribeSessionStore.kt  # Active job only (selected + activeTranscriptId + progress/error)
     SkillRepository.kt         # Built-ins + custom skills → skills.json
     HistoryStore.kt            # Transcripts + title/summary/thumb + cached skill results
   domain/
@@ -57,7 +57,7 @@ app/src/main/java/com/illyism/transcribe/
       SkillsViewModel.kt       # Skill CRUD + quickRun / regenerate
       SkillsScreen.kt / SkillEditorScreen.kt / SkillResultsScreen.kt
     theme/Theme.kt             # Amber accent #E8A838 on #121212
-    screens/                   # Home, History, Selected, Processing, Done, Settings
+    screens/                   # Home, History, TranscriptDetail (DoneScreen), Settings
     components/Components.kt   # PrimaryButton, LabeledDropdown, …
 ```
 
@@ -66,10 +66,13 @@ app/src/main/java/com/illyism/transcribe/
 - Composition-held back stacks via `rememberNavBackStack` (one per tab: Home / History / Skills).
 - Screens are addressed by ID: `TranscriptDetail(transcriptId)`, `SkillResults(transcriptId, skillId)`, `SkillEditor(skillId?)`.
 - Finished transcripts load from `HistoryStore.get(id)` — not mirrored in `UiState`.
-- On pipeline DONE, ViewModel appends to HistoryStore and emits `finishedTranscriptId`; UI replaces `Processing` with `TranscriptDetail(id)`.
+- Pick/share creates a draft [HistoryEntry](app/src/main/java/com/illyism/transcribe/data/HistoryStore.kt) and opens `TranscriptDetail(id)` on Home. **DoneScreen** phases: Ready (Start gated on API key) → Working (pipeline steps) → Complete (preview, skills, export). Auto-starts when API key is set.
+- On pipeline DONE, ViewModel finalizes the same draft id in HistoryStore; UI stays on `TranscriptDetail(id)` (no tab switch).
+- Draft rows are hidden from the Files list until SRT exists.
 - TranscriptDetail launches skills via AssistChips (one tap → streaming `SkillResults`); lists cached runs under **Creations**; tap → `SkillResults` (loads cache if no in-memory result).
-- `TranscribeSessionStore` only holds the ephemeral active job (selected video + progress/error).
+- `TranscribeSessionStore` holds the ephemeral active job (selected video, `activeTranscriptId`, progress/error).
 - Deep links (`MainActivity` `singleTop` + `DeepLinks.kt`): `transcribe://transcript/{id}` → History → `TranscriptDetail`; `transcribe://skill/{transcriptId}/{skillId}` → History → detail → `SkillResults` (cached result required). Missing transcript → snackbar "Transcript not found". Transcript detail copies the app-scheme URI to the clipboard (not system share — `transcribe://` only opens this app).
+- Share / Open with (`ACTION_SEND`, `ACTION_SEND_MULTIPLE`, `ACTION_VIEW` for `video/*` + `audio/*`): parse `EXTRA_STREAM` / view URI in `DeepLinks.parseIncoming` → `onVideoPicked` → `TranscriptDetail`. Persistable URI permission is best-effort (many share grants are temporary only).
 - **Adaptive History list-detail** (medium/expanded width): Material `ListDetailSceneStrategy` (`adaptive-navigation3:1.3.0-alpha09`, compileSdk 36–compatible) on `NavDisplay`. `History` = list pane, `TranscriptDetail` = detail pane; compact width keeps single-pane push. Selecting an item uses `Navigator.openHistoryDetail` (replace detail). Back clears detail first on tablet; DoneScreen hides back when History is wide. Home/Skills adaptive panes are out of scope for v1.
 
 ## Pipeline (must match CLI intent)

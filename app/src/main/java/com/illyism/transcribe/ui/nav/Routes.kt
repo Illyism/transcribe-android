@@ -15,12 +15,6 @@ sealed interface AppKey : NavKey {
     data object Skills : AppKey
 
     @Serializable
-    data object Selected : AppKey
-
-    @Serializable
-    data object Processing : AppKey
-
-    @Serializable
     data object Settings : AppKey
 
     @Serializable

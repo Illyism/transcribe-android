@@ -53,6 +53,30 @@ class HistoryStore(context: Context) {
         loadEntries().find { it.id == id }
     }
 
+    /** Provisional row before transcription finishes (empty [HistoryEntry.srtPath]). */
+    fun createDraft(
+        filename: String,
+        sourceUri: String,
+        durationSeconds: Double = 0.0,
+        id: String = UUID.randomUUID().toString()
+    ): HistoryEntry = synchronized(lock) {
+        val list = loadEntries().toMutableList()
+        val entry = HistoryEntry(
+            id = id,
+            filename = filename,
+            srtPath = "",
+            preview = "",
+            durationSeconds = durationSeconds,
+            sourceUri = sourceUri
+        )
+        list.add(entry)
+        persist(list)
+        entry
+    }
+
+    fun isDraft(entry: HistoryEntry): Boolean =
+        entry.srtPath.isBlank() || !File(entry.srtPath).exists()
+
     fun append(
         filename: String,
         srtPath: String,

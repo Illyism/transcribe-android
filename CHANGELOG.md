@@ -7,6 +7,11 @@ and this project roughly follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+
+- Unified transcription flow: pick/share opens `TranscriptDetail` immediately; Ready → Working → Complete phases on one screen (removed `Selected` / `Processing` routes).
+- Share / Open-with intents for video and audio land on transcript detail with auto-start when API key is set.
+
 ### Planned
 
 - Adaptive panes for Home / Skills (History list-detail is in)

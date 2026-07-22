@@ -63,8 +63,6 @@ import com.illyism.transcribe.ui.nav.toEntries
 import com.illyism.transcribe.ui.screens.DoneScreen
 import com.illyism.transcribe.ui.screens.HistoryScreen
 import com.illyism.transcribe.ui.screens.HomeScreen
-import com.illyism.transcribe.ui.screens.ProcessingScreen
-import com.illyism.transcribe.ui.screens.SelectedScreen
 import com.illyism.transcribe.ui.screens.SettingsScreen
 import com.illyism.transcribe.ui.skills.SkillEditorScreen
 import com.illyism.transcribe.ui.skills.SkillResultsScreen
@@ -76,14 +74,18 @@ import java.io.File
 class MainActivity : ComponentActivity() {
     private val viewModel: TranscribeViewModel by viewModels()
     private val skillsViewModel: SkillsViewModel by viewModels()
-    private val pendingDeepLink = mutableStateOf<Uri?>(null)
+    /** Cold-start / onNewIntent payload (deep link or shared media). */
+    private val pendingIncomingIntent = mutableStateOf<Intent?>(null)
 
     @OptIn(ExperimentalMaterial3AdaptiveApi::class)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         maybeRequestNotificationPermission()
-        pendingDeepLink.value = intent?.data
+        // Skip restore after rotation — intent is still the launch Intent.
+        if (savedInstanceState == null) {
+            pendingIncomingIntent.value = intent
+        }
 
         setContent {
             TranscribeTheme {
@@ -98,11 +100,11 @@ class MainActivity : ComponentActivity() {
                 )
                 val navigator = remember { Navigator(navState) }
 
-                val deepLinkUri by pendingDeepLink
-                LaunchedEffect(deepLinkUri) {
-                    val uri = deepLinkUri ?: return@LaunchedEffect
-                    pendingDeepLink.value = null
-                    handleDeepLink(uri, navigator)
+                val incomingIntent by pendingIncomingIntent
+                LaunchedEffect(incomingIntent) {
+                    val launchIntent = incomingIntent ?: return@LaunchedEffect
+                    pendingIncomingIntent.value = null
+                    handleIncomingIntent(launchIntent, navigator)
                 }
 
                 // History list-detail on medium/expanded width (Material Nav3 scene).
@@ -125,10 +127,8 @@ class MainActivity : ComponentActivity() {
                     contract = ActivityResultContracts.OpenDocument()
                 ) { uri ->
                     if (uri != null) {
-                        viewModel.onVideoPicked(uri)
-                        navigator.ensureTopLevel(AppKey.Home)
-                        if (navigator.currentKey() != AppKey.Selected) {
-                            navigator.navigate(AppKey.Selected)
+                        viewModel.onVideoPicked(uri) { id ->
+                            navigator.openTranscriptDetail(id)
                         }
                     }
                 }
@@ -159,16 +159,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 LaunchedEffect(Unit) {
-                    viewModel.finishedTranscriptId.collect { id ->
-                        navigator.openFinishedTranscript(id)
-                    }
-                }
-
-                LaunchedEffect(Unit) {
                     viewModel.restoreNav.collect { restore ->
                         when (restore) {
-                            TranscribeViewModel.RestoreNav.Selected -> navigator.openSelected()
-                            TranscribeViewModel.RestoreNav.Processing -> navigator.openProcessing()
+                            is TranscribeViewModel.RestoreNav.TranscriptDetail ->
+                                navigator.openTranscriptDetail(restore.transcriptId)
                         }
                     }
                 }
@@ -254,50 +248,15 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    entry<AppKey.Selected> {
-                        RequireOrBack(state.selected, navigator::goBack) { selected ->
-                            SelectedScreen(
-                                name = selected.displayName,
-                                sizeBytes = selected.sizeBytes,
-                                durationMs = selected.durationMs,
-                                hasApiKey = state.hasApiKey,
-                                onStart = {
-                                    if (viewModel.startTranscription()) {
-                                        navigator.replaceTop(AppKey.Processing)
-                                    }
-                                },
-                                onChooseDifferent = {
-                                    picker.launch(arrayOf("video/*", "audio/*"))
-                                },
-                                onOpenSettings = { navigator.navigate(AppKey.Settings) }
-                            )
-                        }
-                    }
-
-                    entry<AppKey.Processing> {
-                        ProcessingScreen(
-                            stage = state.stage,
-                            percent = state.percent,
-                            chunksDone = state.chunksDone,
-                            chunksTotal = state.chunksTotal,
-                            videoBytes = state.videoBytes,
-                            audioBytes = state.audioBytes,
-                            message = state.message,
-                            error = state.error,
-                            onRetry = { viewModel.startTranscription() },
-                            onChooseDifferent = {
-                                viewModel.chooseDifferent()
-                                navigator.clearToRoot()
-                            }
-                        )
-                    }
-
                     entry<AppKey.TranscriptDetail>(
                         metadata = ListDetailSceneStrategy.detailPane()
                     ) { key ->
                         // Hide back in History two-pane; keep it for Home / compact.
                         val showBack = !(isWideWidth && topLevel == AppKey.History)
                         val skillRuns = viewModel.listCachedSkillRuns(key.transcriptId)
+                        val phase = viewModel.detailPhase(key.transcriptId)
+                        val isActive = viewModel.isActiveJob(key.transcriptId)
+                        val selected = state.selected
                         RequireOrBack(
                             viewModel.transcript(key.transcriptId),
                             navigator::goBack
@@ -314,6 +273,25 @@ class MainActivity : ComponentActivity() {
                                 sourceUri = entry.sourceUri,
                                 quickSkills = skillsState.builtIns + skillsState.customSkills,
                                 skillRuns = skillRuns,
+                                phase = phase,
+                                sizeBytes = selected?.sizeBytes ?: 0L,
+                                durationMs = selected?.durationMs ?: (entry.durationSeconds * 1000).toLong(),
+                                hasApiKey = state.hasApiKey,
+                                stage = state.stage,
+                                percent = state.percent,
+                                chunksDone = state.chunksDone,
+                                chunksTotal = state.chunksTotal,
+                                videoBytes = state.videoBytes,
+                                audioBytes = state.audioBytes,
+                                message = state.message,
+                                error = state.error,
+                                onStart = { viewModel.startTranscription() },
+                                onRetry = { viewModel.startTranscription() },
+                                onChooseDifferent = {
+                                    viewModel.chooseDifferent()
+                                    picker.launch(arrayOf("video/*", "audio/*"))
+                                },
+                                onOpenSettings = { navigator.navigate(AppKey.Settings) },
                                 onExport = { format ->
                                     viewModel.exportAndShare(key.transcriptId, format) { intent ->
                                         share(intent, "Share transcript")
@@ -349,7 +327,15 @@ class MainActivity : ComponentActivity() {
                                         AppKey.SkillResults(key.transcriptId, skillId)
                                     )
                                 },
-                                onBack = navigator::goBack,
+                                onBack = {
+                                    when {
+                                        isActive && phase == TranscribeViewModel.TranscriptDetailPhase.Working ->
+                                            viewModel.cancelActiveJob()
+                                        isActive && phase == TranscribeViewModel.TranscriptDetailPhase.Ready ->
+                                            viewModel.dismissActiveDraft()
+                                    }
+                                    navigator.goBack()
+                                },
                                 showBack = showBack
                             )
                         }
@@ -559,7 +545,18 @@ class MainActivity : ComponentActivity() {
                             entries = navState.toEntries(appEntryProvider),
                             onBack = {
                                 when (val top = navigator.currentKey()) {
-                                    is AppKey.Processing -> viewModel.cancelActiveJob()
+                                    is AppKey.TranscriptDetail -> {
+                                        val phase = viewModel.detailPhase(top.transcriptId)
+                                        if (viewModel.isActiveJob(top.transcriptId)) {
+                                            when (phase) {
+                                                TranscribeViewModel.TranscriptDetailPhase.Working ->
+                                                    viewModel.cancelActiveJob()
+                                                TranscribeViewModel.TranscriptDetailPhase.Ready ->
+                                                    viewModel.dismissActiveDraft()
+                                                else -> Unit
+                                            }
+                                        }
+                                    }
                                     is AppKey.SkillResults -> {
                                         if (skillsState.running) skillsViewModel.cancelRun()
                                     }
@@ -605,11 +602,25 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        pendingDeepLink.value = intent.data
+        pendingIncomingIntent.value = intent
     }
 
-    private fun handleDeepLink(uri: Uri, navigator: Navigator) {
-        when (val target = DeepLinks.parse(uri)) {
+    private fun handleIncomingIntent(intent: Intent, navigator: Navigator) {
+        when (val incoming = DeepLinks.parseIncoming(intent)) {
+            is DeepLinks.Incoming.DeepLink -> handleDeepLink(incoming.target, navigator)
+            is DeepLinks.Incoming.SharedMedia -> openSharedMedia(incoming.uri, navigator)
+            null -> Unit
+        }
+    }
+
+    private fun openSharedMedia(uri: Uri, navigator: Navigator) {
+        viewModel.onVideoPicked(uri) { id ->
+            navigator.openTranscriptDetail(id)
+        }
+    }
+
+    private fun handleDeepLink(target: DeepLinks.Target, navigator: Navigator) {
+        when (target) {
             is DeepLinks.Target.Transcript -> {
                 if (viewModel.transcript(target.transcriptId) == null) {
                     navigator.navigate(AppKey.History)
@@ -631,7 +642,6 @@ class MainActivity : ComponentActivity() {
                 }
                 navigator.openFromDeepLink(target.transcriptId, target.skillId)
             }
-            null -> Unit
         }
     }
 
